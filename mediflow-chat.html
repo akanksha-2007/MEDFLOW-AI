@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>MediFlow  Care Companion</title>
+<title>MediFlow — Care Companion</title>
 <style>
   :root {
     --bg: #F6F4EF;
@@ -26,7 +26,6 @@
     --tool-tag-bg: #F1EFE8;
   }
 
-  /* DARK MODE  toggled via data-theme="dark" on <html> */
   html[data-theme="dark"] {
     --bg: #14201C;
     --panel: #1C2924;
@@ -71,30 +70,11 @@
     gap: 10px;
   }
 
-  .brand {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-  }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand h1 { font-size: 19px; margin: 0; letter-spacing: 0.2px; font-weight: 600; }
+  .brand span { font-size: 12px; color: #B9CFC9; }
 
-  .brand h1 {
-    font-size: 19px;
-    margin: 0;
-    letter-spacing: 0.2px;
-    font-weight: 600;
-  }
-
-  .brand span {
-    font-size: 12px;
-    color: #B9CFC9;
-  }
-
-  .controls {
-    display: flex;
-    gap: 10px;
-    align-items: center;
-    font-size: 13px;
-  }
+  .controls { display: flex; gap: 10px; align-items: center; font-size: 13px; }
 
   .controls input, .controls select {
     background: var(--input-bg);
@@ -104,10 +84,9 @@
     padding: 6px 10px;
     font-size: 13px;
   }
-
   .controls input::placeholder { color: #A9C4BE; }
 
-  #themeToggle {
+  .icon-btn {
     background: var(--input-bg);
     border: 1px solid var(--input-border);
     color: var(--input-fg);
@@ -115,19 +94,33 @@
     width: 34px;
     height: 34px;
     cursor: pointer;
-    font-size: 15px;
     display: flex;
     align-items: center;
     justify-content: center;
+    position: relative;
+    padding: 0;
+  }
+  .icon-btn svg { width: 17px; height: 17px; stroke: currentColor; fill: none; }
+  .icon-btn.labeled { width: auto; padding: 0 12px; gap: 6px; font-size: 13px; }
+
+  #notifBadge {
+    display: none;
+    position: absolute;
+    top: -5px; right: -5px;
+    background: var(--high);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: 999px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 3px;
+    align-items: center;
+    justify-content: center;
+    line-height: 16px;
   }
 
-  main {
-    flex: 1;
-    display: flex;
-    justify-content: center;
-    overflow: hidden;
-    padding: 18px;
-  }
+  main { flex: 1; display: flex; justify-content: center; overflow: hidden; padding: 18px; }
 
   .chat-shell {
     width: 100%;
@@ -142,21 +135,16 @@
     transition: background 0.2s ease, border-color 0.2s ease;
   }
 
-  #messages {
-    flex: 1;
-    overflow-y: auto;
-    padding: 22px;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-  }
+  #messages { flex: 1; overflow-y: auto; padding: 22px; display: flex; flex-direction: column; gap: 14px; }
 
-  .row { display: flex; }
-  .row.user { justify-content: flex-end; }
-  .row.agent { justify-content: flex-start; }
+  .row { display: flex; flex-direction: column; gap: 4px; }
+  .row.user { align-items: flex-end; }
+  .row.agent { align-items: flex-start; }
+
+  .bubble-wrap { display: flex; align-items: flex-end; gap: 6px; max-width: 84%; }
+  .row.user .bubble-wrap { flex-direction: row-reverse; }
 
   .bubble {
-    max-width: 78%;
     padding: 12px 16px;
     border-radius: var(--radius);
     line-height: 1.5;
@@ -164,126 +152,95 @@
     white-space: pre-wrap;
   }
 
-  .row.user .bubble {
-    background: var(--user-bubble);
-    color: #FFFFFF;
-    border-bottom-right-radius: 4px;
-  }
+  .row.user .bubble { background: var(--user-bubble); color: #FFFFFF; border-bottom-right-radius: 4px; }
+  .row.agent .bubble { background: var(--agent-bubble); border: 1px solid var(--line); color: var(--ink); border-bottom-left-radius: 4px; }
 
-  .row.agent .bubble {
-    background: var(--agent-bubble);
+  .listen-btn {
+    flex-shrink: 0;
+    width: 26px; height: 26px;
+    border-radius: 50%;
     border: 1px solid var(--line);
-    color: var(--ink);
-    border-bottom-left-radius: 4px;
+    background: var(--panel);
+    color: var(--ink-soft);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
   }
+  .listen-btn svg { width: 13px; height: 13px; }
+  .listen-btn.speaking { color: var(--teal); border-color: var(--teal); }
 
-  .conflict-card {
-    max-width: 84%;
-    border-radius: var(--radius);
-    padding: 12px 16px;
-    border: 1px solid var(--line);
-    font-size: 13.5px;
-  }
-
+  .conflict-card { max-width: 84%; border-radius: var(--radius); padding: 12px 16px; border: 1px solid var(--line); font-size: 13.5px; }
   .conflict-card.high { background: var(--high-bg); border-color: #EFC9C0; }
   .conflict-card.medium { background: var(--medium-bg); border-color: #F1DCB2; }
-
-  .conflict-title {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-weight: 600;
-    margin-bottom: 4px;
-  }
-
-  .dot {
-    width: 8px; height: 8px; border-radius: 50%;
-    display: inline-block;
-  }
+  .conflict-title { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 4px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   .dot.high { background: var(--high); }
   .dot.medium { background: var(--medium); }
 
   .tool-tag {
-    display: inline-block;
-    font-size: 11px;
-    color: var(--ink-soft);
-    background: var(--tool-tag-bg);
-    border: 1px solid var(--line);
-    padding: 2px 8px;
-    border-radius: 999px;
-    margin-bottom: 8px;
+    display: inline-block; font-size: 11px; color: var(--ink-soft);
+    background: var(--tool-tag-bg); border: 1px solid var(--line);
+    padding: 2px 8px; border-radius: 999px; margin-bottom: 8px;
   }
 
-  .composer {
-    border-top: 1px solid var(--line);
-    padding: 8px 10px;
-    display: flex;
-    gap: 6px;
-    align-items: flex-end;
-    background: var(--panel);
-  }
+  .composer { border-top: 1px solid var(--line); padding: 14px 16px; display: flex; gap: 8px; align-items: flex-end; background: var(--panel); }
 
   .composer textarea {
-    flex: 1;
-    resize: none;
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    padding: 10px 12px;
-    font-size: 14px;
-    font-family: inherit;
-    max-height: 100px;
-    outline: none;
-    background: var(--panel);
-    color: var(--ink);
+    flex: 1; resize: none; border: 1px solid var(--line); border-radius: 12px;
+    padding: 10px 12px; font-size: 14px; font-family: inherit; max-height: 100px;
+    outline: none; background: var(--panel); color: var(--ink);
   }
   .composer textarea:focus { border-color: var(--teal); }
 
-  button.icon-btn, button.send-btn {
-    border: none;
-    border-radius: 12px;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 13px;
-  }
-
-  button.icon-btn {
-    background: var(--tool-tag-bg);
-    color: var(--ink);
-    width: 38px;
-    height: 38px;
-    font-size: 18px;
-  }
+  .composer .icon-btn { width: 42px; height: 42px; }
+  .composer .icon-btn svg { width: 19px; height: 19px; }
+  .composer .icon-btn.recording { background: var(--high); border-color: var(--high); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
 
   button.send-btn {
-    background: var(--teal);
-    color: #fff;
-    padding: 0 12px;
-    height: 38px;
-    font-weight: 600;
+    border: none; border-radius: 12px; cursor: pointer; font-family: inherit; font-size: 13px;
+    background: var(--teal); color: #fff; padding: 0 18px; height: 42px; font-weight: 600;
   }
   button.send-btn:hover { background: var(--teal-deep); }
 
   #fileInput { display: none; }
 
-  .empty-state {
-    margin: auto;
-    text-align: center;
-    color: var(--ink-soft);
-    font-size: 13.5px;
-    max-width: 320px;
-  }
+  .empty-state { margin: auto; text-align: center; color: var(--ink-soft); font-size: 13.5px; max-width: 320px; }
+  .empty-state strong { color: var(--ink); display: block; font-size: 15px; margin-bottom: 6px; }
 
-  .empty-state strong { color: var(--ink); display:block; font-size: 15px; margin-bottom: 6px; }
-
-  .upload-banner {
-    font-size: 12.5px;
-    color: var(--ink-soft);
-    padding: 6px 16px 0 16px;
-  }
+  .upload-banner { font-size: 12.5px; color: var(--ink-soft); padding: 6px 16px 0 16px; }
 
   ::-webkit-scrollbar { width: 8px; }
   ::-webkit-scrollbar-thumb { background: #DCD7C9; border-radius: 8px; }
   html[data-theme="dark"] ::-webkit-scrollbar-thumb { background: #35473F; }
+
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(27,62,57,0.35);
+    align-items: center; justify-content: center; z-index: 20;
+  }
+  .modal-box { background: var(--panel); border-radius: 16px; padding: 24px; width: 340px; max-height: 80vh; overflow-y: auto; box-shadow: 0 12px 32px rgba(0,0,0,0.2); }
+  .modal-box h3 { margin: 0 0 14px 0; font-size: 16px; color: var(--ink); }
+  .modal-box input, .modal-box select {
+    width: 100%; padding: 9px 10px; margin-bottom: 8px; border: 1px solid var(--line);
+    border-radius: 8px; font-size: 14px; background: var(--panel); color: var(--ink);
+  }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+  .btn-secondary { background: var(--tool-tag-bg); color: var(--ink); border: none; border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+  .btn-primary { background: var(--teal); color: #fff; border: none; border-radius: 8px; padding: 8px 14px; cursor: pointer; font-weight: 600; }
+
+  #notifPanel {
+    display: none; position: fixed; top: 60px; right: 20px; width: 320px; max-height: 420px;
+    overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.18); z-index: 20;
+  }
+  #notifPanel .panel-header { padding: 12px 16px; border-bottom: 1px solid var(--line); font-weight: 600; font-size: 14px; color: var(--ink); }
+
+  .facility-card {
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; font-size: 13px;
+  }
+  .facility-card .fname { font-weight: 600; color: var(--ink); margin-bottom: 2px; }
+  .facility-card .faddr { color: var(--ink-soft); margin-bottom: 4px; }
+  .facility-card a { color: var(--teal); font-size: 12.5px; text-decoration: none; }
+  .saved-address { font-size: 12px; color: var(--ink-soft); margin-bottom: 10px; padding: 8px 10px; background: var(--tool-tag-bg); border-radius: 8px; }
 </style>
 </head>
 <body>
@@ -298,58 +255,105 @@
     <select id="patientSelect">
       <option value="">Loading patients...</option>
     </select>
-    <button class="icon-btn" id="newPatientBtn" title="Register as a new patient" style="width:auto; padding:0 12px; height:34px; font-size:13px;">+ New patient</button>
-    <button class="icon-btn" id="remindersBtn" title="Manage medication reminders" style="width:34px; height:34px; font-size:16px;">R</button>
-    <button id="notifBell" title="Notifications" style="position:relative; background:var(--input-bg); border:1px solid var(--input-border); color:var(--input-fg); border-radius:8px; width:34px; height:34px; cursor:pointer; font-size:15px;">
-      
-      <span id="notifBadge" style="display:none; position:absolute; top:-4px; right:-4px; background:var(--high); color:#fff; font-size:10px; font-weight:700; border-radius:999px; min-width:16px; height:16px; padding:0 3px; align-items:center; justify-content:center; line-height:16px;">0</span>
+
+    <button class="icon-btn labeled" id="newPatientBtn" title="Register as a new patient">
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      New patient
     </button>
-    <button id="themeToggle" title="Toggle dark mode"></button>
+
+    <button class="icon-btn labeled" id="newChatBtn" title="Start a new conversation">
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      New chat
+    </button>
+
+    <button class="icon-btn" id="nearbyBtn" title="Find nearby care">
+      <svg viewBox="0 0 24 24"><path d="M12 21s-7-6.5-7-11a7 7 0 0114 0c0 4.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>
+    </button>
+
+    <button class="icon-btn" id="remindersBtn" title="Medication reminders">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="7"/><path d="M12 9v4l3 2M9 3h6M4.5 6.5l1.5 1.5M19.5 6.5L18 8"/></svg>
+    </button>
+
+    <button class="icon-btn" id="notifBell" title="Notifications">
+      <svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6z"/><path d="M10.5 20a1.5 1.5 0 003 0"/></svg>
+      <span id="notifBadge">0</span>
+    </button>
+
+    <button class="icon-btn" id="themeToggle" title="Toggle dark mode">
+      <svg viewBox="0 0 24 24" id="themeIconMoon"><path d="M20 14.5A8.5 8.5 0 0110.5 4 8.5 8.5 0 1020 14.5z"/></svg>
+    </button>
   </div>
 </header>
 
-<!-- NOTIFICATIONS PANEL -->
-<div id="notifPanel" style="display:none; position:fixed; top:60px; right:20px; width:320px; max-height:420px; overflow-y:auto; background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:0 12px 32px rgba(0,0,0,0.18); z-index:20;">
-  <div style="padding:12px 16px; border-bottom:1px solid var(--line); font-weight:600; font-size:14px; color:var(--ink);">Notifications</div>
+<div id="notifPanel">
+  <div class="panel-header">Notifications</div>
   <div id="notifList" style="padding:8px;"></div>
 </div>
 
-<!-- REMINDERS PANEL -->
-<div id="remindersModal" style="display:none; position:fixed; inset:0; background:rgba(27,62,57,0.35); align-items:center; justify-content:center; z-index:20;">
-  <div style="background:var(--panel); border-radius:16px; padding:24px; width:360px; max-height:80vh; overflow-y:auto; box-shadow:0 12px 32px rgba(0,0,0,0.2);">
-    <h3 style="margin:0 0 14px 0; font-size:16px; color:var(--ink);">Medication reminders</h3>
+<div id="remindersModal" class="modal-overlay">
+  <div class="modal-box">
+    <h3>Medication reminders</h3>
     <div id="reminderList" style="margin-bottom:16px;"></div>
     <div style="border-top:1px solid var(--line); padding-top:14px;">
       <div style="font-size:13px; font-weight:600; color:var(--ink); margin-bottom:8px;">Add a reminder</div>
-      <select id="reminderMedSelect" style="width:100%; padding:9px 10px; margin-bottom:6px; border:1px solid var(--line); border-radius:8px; font-size:14px; background:var(--panel); color:var(--ink);">
+      <select id="reminderMedSelect">
         <option value="">Loading medicines...</option>
       </select>
-      <div style="text-align:center; font-size:11.5px; color:var(--ink-soft); margin-bottom:6px;"> or, if it's not listed above </div>
-      <input id="reminderCustomNameInput" placeholder="Type medicine name manually (e.g. Vitamin D)" style="width:100%; padding:9px 10px; margin-bottom:8px; border:1px solid var(--line); border-radius:8px; font-size:14px; background:var(--panel); color:var(--ink);" />
-      <input id="reminderTimeInput" type="time" style="width:100%; padding:9px 10px; margin-bottom:8px; border:1px solid var(--line); border-radius:8px; font-size:14px; background:var(--panel); color:var(--ink);" />
-      <input id="reminderLabelInput" placeholder="Note (optional), e.g. with breakfast" style="width:100%; padding:9px 10px; margin-bottom:12px; border:1px solid var(--line); border-radius:8px; font-size:14px; background:var(--panel); color:var(--ink);" />
-      <div style="display:flex; gap:8px; justify-content:flex-end;">
-        <button id="closeRemindersBtn" style="background:var(--tool-tag-bg); color:var(--ink); border:none; border-radius:8px; padding:8px 14px; cursor:pointer;">Close</button>
-        <button id="addReminderBtn" style="background:var(--teal); color:#fff; border:none; border-radius:8px; padding:8px 14px; cursor:pointer; font-weight:600;">Add reminder</button>
+      <div style="text-align:center; font-size:11.5px; color:var(--ink-soft); margin-bottom:6px;">— or, if it's not listed above —</div>
+      <input id="reminderCustomNameInput" placeholder="Type medicine name manually (e.g. Vitamin D)" />
+      <input id="reminderTimeInput" type="time" />
+      <input id="reminderLabelInput" placeholder="Note (optional), e.g. with breakfast" />
+      <div class="modal-actions">
+        <button id="closeRemindersBtn" class="btn-secondary">Close</button>
+        <button id="addReminderBtn" class="btn-primary">Add reminder</button>
       </div>
     </div>
   </div>
 </div>
 
-<div id="registerModal" style="display:none; position:fixed; inset:0; background:rgba(27,62,57,0.35); align-items:center; justify-content:center; z-index:10;">
-  <div style="background:var(--panel); border-radius:16px; padding:24px; width:320px; box-shadow:0 12px 32px rgba(0,0,0,0.2);">
-    <h3 style="margin:0 0 14px 0; font-size:16px; color:var(--ink);">Register as a new patient</h3>
-    <input id="regName" placeholder="Full name" style="width:100%; padding:9px 10px; margin-bottom:8px; border:1px solid var(--line); border-radius:8px; font-size:14px; background:var(--panel); color:var(--ink);" />
-    <input id="regAge" placeholder="Age" type="number" style="width:100%; padding:9px 10px; margin-bottom:8px; border:1px solid var(--line); border-radius:8px; font-size:14px; background:var(--panel); color:var(--ink);" />
-    <select id="regLanguage" style="width:100%; padding:9px 10px; margin-bottom:14px; border:1px solid var(--line); border-radius:8px; font-size:14px; background:var(--panel); color:var(--ink);">
+<div id="registerModal" class="modal-overlay">
+  <div class="modal-box">
+    <h3>Register as a new patient</h3>
+    <input id="regName" placeholder="Full name" />
+    <input id="regAge" placeholder="Age" type="number" />
+    <select id="regLanguage">
       <option value="english">English</option>
       <option value="hindi">Hindi</option>
       <option value="hinglish">Hinglish (WhatsApp-style mix)</option>
       <option value="punjabi">Punjabi</option>
     </select>
-    <div style="display:flex; gap:8px; justify-content:flex-end;">
-      <button id="cancelRegBtn" style="background:var(--tool-tag-bg); color:var(--ink); border:none; border-radius:8px; padding:8px 14px; cursor:pointer;">Cancel</button>
-      <button id="submitRegBtn" style="background:var(--teal); color:#fff; border:none; border-radius:8px; padding:8px 14px; cursor:pointer; font-weight:600;">Register</button>
+    <div class="modal-actions">
+      <button id="cancelRegBtn" class="btn-secondary">Cancel</button>
+      <button id="submitRegBtn" class="btn-primary">Register</button>
+    </div>
+  </div>
+</div>
+
+<div id="nearbyModal" class="modal-overlay">
+  <div class="modal-box">
+    <h3>Find nearby care</h3>
+
+    <div id="savedAddressBox" class="saved-address" style="display:none;"></div>
+
+    <div style="font-size:13px; font-weight:600; color:var(--ink); margin-bottom:8px;">Your address</div>
+    <input id="addressInput" placeholder="e.g. Ludhiana, Punjab, India — or any city worldwide" />
+    <button id="saveAddressBtn" class="btn-primary" style="width:100%; margin-bottom:14px;">Save address</button>
+
+    <div style="border-top:1px solid var(--line); padding-top:14px;">
+      <div style="font-size:13px; font-weight:600; color:var(--ink); margin-bottom:8px;">Search nearby</div>
+      <select id="facilityTypeSelect">
+        <option value="hospital">Hospitals</option>
+        <option value="pharmacy">Pharmacies</option>
+        <option value="clinic">Clinics</option>
+        <option value="diagnostic_center">Diagnostic centers / labs</option>
+      </select>
+      <button id="searchNearbyBtn" class="btn-primary" style="width:100%; margin-bottom:12px;">Search</button>
+
+      <div id="nearbyResults"></div>
+    </div>
+
+    <div class="modal-actions">
+      <button id="closeNearbyBtn" class="btn-secondary">Close</button>
     </div>
   </div>
 </div>
@@ -359,13 +363,20 @@
     <div id="messages">
       <div class="empty-state">
         <strong>Ask me anything about your care</strong>
-        Try: "what medicines am I on?" or "I have chest pain, who should I see?"  or upload a prescription below.
+        Try: "what medicines am I on?" or "I have chest pain, who should I see?" — or upload a prescription below.
       </div>
     </div>
     <div class="upload-banner" id="uploadStatus"></div>
     <div class="composer">
-      <button class="icon-btn" id="uploadBtn" title="Upload a document" aria-label="Upload a document">+</button>
+      <button class="icon-btn" id="uploadBtn" title="Upload a document">
+        <svg viewBox="0 0 24 24"><path d="M21 12.5V17a4 4 0 01-4 4H7a4 4 0 01-4-4V7a4 4 0 014-4h9M14 3l6 6M14 3v6h6"/></svg>
+      </button>
       <input type="file" id="fileInput" accept="image/*" />
+
+      <button class="icon-btn" id="micBtn" title="Speak your message">
+        <svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v4M8 22h8"/></svg>
+      </button>
+
       <textarea id="messageInput" rows="1" placeholder="Type a message..."></textarea>
       <button class="send-btn" id="sendBtn">Send</button>
     </div>
@@ -382,16 +393,21 @@
   const uploadBtn = document.getElementById('uploadBtn');
   const uploadStatus = document.getElementById('uploadStatus');
   const themeToggle = document.getElementById('themeToggle');
+  const micBtn = document.getElementById('micBtn');
 
-  const EMPTY_STATE_HTML = '<div class="empty-state"><strong>Ask me anything about your care</strong>Try: "what medicines am I on?" or "I have chest pain, who should I see?"  or upload a prescription below.</div>';
+  const EMPTY_STATE_HTML = '<div class="empty-state"><strong>Ask me anything about your care</strong>Try: "what medicines am I on?" or "I have chest pain, who should I see?" — or upload a prescription below.</div>';
 
   let history = [];
   let currentPatientId = '';
+  let currentSessionId = '';
 
   // ---------------- DARK MODE ----------------
+  const moonIcon = '<path d="M20 14.5A8.5 8.5 0 0110.5 4 8.5 8.5 0 1020 14.5z"/>';
+  const sunIcon = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2 12h2M20 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/>';
+
   function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
-    themeToggle.textContent = theme === 'dark' ? 'Light' : 'Dark';
+    themeToggle.querySelector('svg').innerHTML = theme === 'dark' ? sunIcon : moonIcon;
   }
   applyTheme(localStorage.getItem('mediflow-theme') || 'light');
   themeToggle.addEventListener('click', () => {
@@ -400,10 +416,6 @@
     applyTheme(next);
   });
 
-  // If this page is served BY the backend itself (recommended  see deployment
-  // notes), window.location.origin IS the API's URL, so it works automatically
-  // wherever this gets deployed. If someone opens this HTML file directly on
-  // their own computer (file://) instead, fall back to localhost:8000.
   apiBaseInput.value = (window.location.origin.startsWith('http'))
     ? window.location.origin
     : 'http://localhost:8000';
@@ -412,16 +424,67 @@
     return apiBaseInput.value.replace(/\/$/, '');
   }
 
-  // ---------------- FIX (Bug: switching patient kept old chat) ----------------
-  // Root cause: patientSelect had NO change listener at all, so the chat
-  // window and the in-memory `history` array never reset when a different
-  // patient was picked from the dropdown. This now:
-  //   1. Clears the on-screen messages and resets `history` to empty
-  //   2. Fetches that patient's OWN history from the server (agent.py now
-  //      always keeps server-side history keyed by patient_id) and renders it
-  // so switching patients always shows a fresh, correct conversation.
+  // ---------------- VOICE INPUT (speech-to-text) ----------------
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let recognizer = null;
+  let isRecording = false;
+
+  if (SpeechRecognition) {
+    recognizer = new SpeechRecognition();
+    recognizer.continuous = false;
+    recognizer.interimResults = false;
+
+    recognizer.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      input.value = (input.value ? input.value + ' ' : '') + transcript;
+    };
+    recognizer.onend = () => {
+      isRecording = false;
+      micBtn.classList.remove('recording');
+    };
+    recognizer.onerror = () => {
+      isRecording = false;
+      micBtn.classList.remove('recording');
+    };
+
+    micBtn.addEventListener('click', () => {
+      const langMap = { hindi: 'hi-IN', punjabi: 'pa-IN', hinglish: 'hi-IN', english: 'en-IN' };
+      recognizer.lang = langMap[currentLanguage] || 'en-IN';
+
+      if (isRecording) {
+        recognizer.stop();
+      } else {
+        isRecording = true;
+        micBtn.classList.add('recording');
+        recognizer.start();
+      }
+    });
+  } else {
+    micBtn.style.display = 'none';
+  }
+
+  let currentLanguage = 'english';
+
+  // ---------------- LISTEN (text-to-speech) ----------------
+  function speakText(text, btn) {
+    if (!window.speechSynthesis) return;
+    if (speechSynthesis.speaking) {
+      speechSynthesis.cancel();
+      document.querySelectorAll('.listen-btn.speaking').forEach(b => b.classList.remove('speaking'));
+      return;
+    }
+    const utter = new SpeechSynthesisUtterance(text);
+    const langMap = { hindi: 'hi-IN', punjabi: 'pa-IN', hinglish: 'hi-IN', english: 'en-IN' };
+    utter.lang = langMap[currentLanguage] || 'en-IN';
+    utter.onstart = () => btn.classList.add('speaking');
+    utter.onend = () => btn.classList.remove('speaking');
+    speechSynthesis.speak(utter);
+  }
+
+  // ---------------- PATIENT SWITCH / HISTORY (session-based) ----------------
   async function loadHistoryForPatient(patientId) {
     currentPatientId = patientId;
+    currentSessionId = '';
     history = [];
     messagesEl.innerHTML = '';
     uploadStatus.textContent = '';
@@ -432,10 +495,20 @@
     }
 
     try {
-      const res = await fetch(apiBase() + '/agent/conversation/' + encodeURIComponent(patientId));
+      const res = await fetch(apiBase() + '/agent/chat/sessions/' + encodeURIComponent(patientId));
       if (res.ok) {
         const data = await res.json();
-        const serverHistory = data.conversation_history || [];
+        const sessions = data.sessions || [];
+
+        if (sessions.length === 0) {
+          messagesEl.innerHTML = EMPTY_STATE_HTML;
+          return;
+        }
+
+        const activeSession = sessions[0];
+        currentSessionId = activeSession.id;
+
+        const serverHistory = activeSession.messages || [];
         if (serverHistory.length === 0) {
           messagesEl.innerHTML = EMPTY_STATE_HTML;
         } else {
@@ -453,9 +526,41 @@
   }
 
   patientSelect.addEventListener('change', () => {
+    const selectedOption = patientSelect.options[patientSelect.selectedIndex];
+    currentLanguage = (selectedOption && selectedOption.dataset.language) || 'english';
     loadHistoryForPatient(patientSelect.value);
     seenNotificationIds = new Set();
     pollNotifications();
+  });
+
+  // ---------------- NEW CHAT ----------------
+  const newChatBtn = document.getElementById('newChatBtn');
+
+  newChatBtn.addEventListener('click', async () => {
+    if (!currentPatientId) {
+      addBubble('agent', 'Please select or register a patient first.');
+      return;
+    }
+
+    try {
+      const res = await fetch(apiBase() + '/agent/chat/new-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ patient_id: currentPatientId })
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        addBubble('agent', 'Could not start a new chat right now.');
+        return;
+      }
+
+      currentSessionId = data.session_id;
+      history = [];
+      messagesEl.innerHTML = EMPTY_STATE_HTML;
+    } catch (err) {
+      addBubble('agent', 'Could not reach the server to start a new chat.');
+    }
   });
 
   async function loadPatients(selectId) {
@@ -466,7 +571,7 @@
       if (!data.patients || data.patients.length === 0) {
         const opt = document.createElement('option');
         opt.value = '';
-        opt.textContent = 'No patients yet  register one';
+        opt.textContent = 'No patients yet — register one';
         patientSelect.appendChild(opt);
         await loadHistoryForPatient('');
         return;
@@ -474,43 +579,38 @@
       data.patients.forEach(p => {
         const opt = document.createElement('option');
         opt.value = p.id;
-        opt.textContent = `${p.name}`;
+        opt.textContent = p.name;
+        opt.dataset.language = p.preferred_language || 'english';
         patientSelect.appendChild(opt);
       });
       const toSelect = selectId || patientSelect.value;
       patientSelect.value = toSelect;
-      // Always (re)load the correct patient's own history on load/select 
-      // this is what was missing before.
+      const selectedOption = patientSelect.options[patientSelect.selectedIndex];
+      currentLanguage = (selectedOption && selectedOption.dataset.language) || 'english';
       await loadHistoryForPatient(patientSelect.value);
     } catch (err) {
-      patientSelect.innerHTML = '<option value="">Could not load patients  check API URL</option>';
+      patientSelect.innerHTML = '<option value="">Could not load patients — check API URL</option>';
     }
   }
 
   loadPatients().then(() => pollNotifications());
   apiBaseInput.addEventListener('change', () => loadPatients());
 
+  // ---------------- REGISTER NEW PATIENT ----------------
   const registerModal = document.getElementById('registerModal');
   const newPatientBtn = document.getElementById('newPatientBtn');
   const cancelRegBtn = document.getElementById('cancelRegBtn');
   const submitRegBtn = document.getElementById('submitRegBtn');
 
-  newPatientBtn.addEventListener('click', () => {
-    registerModal.style.display = 'flex';
-  });
-  cancelRegBtn.addEventListener('click', () => {
-    registerModal.style.display = 'none';
-  });
+  newPatientBtn.addEventListener('click', () => { registerModal.style.display = 'flex'; });
+  cancelRegBtn.addEventListener('click', () => { registerModal.style.display = 'none'; });
 
   submitRegBtn.addEventListener('click', async () => {
     const name = document.getElementById('regName').value.trim();
     const age = document.getElementById('regAge').value;
     const language = document.getElementById('regLanguage').value;
 
-    if (!name) {
-      alert('Please enter a name.');
-      return;
-    }
+    if (!name) { alert('Please enter a name.'); return; }
 
     submitRegBtn.disabled = true;
     submitRegBtn.textContent = 'Registering...';
@@ -519,24 +619,16 @@
       const res = await fetch(apiBase() + '/agent/register-patient', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: name,
-          age: age ? parseInt(age) : null,
-          preferred_language: language
-        })
+        body: JSON.stringify({ name, age: age ? parseInt(age) : null, preferred_language: language })
       });
       const data = await res.json();
 
-      if (!res.ok) {
-        alert('Could not register: ' + (data.detail || 'unknown error'));
-        return;
-      }
+      if (!res.ok) { alert('Could not register: ' + (data.detail || 'unknown error')); return; }
 
       await loadPatients(data.patient_id);
       registerModal.style.display = 'none';
       document.getElementById('regName').value = '';
       document.getElementById('regAge').value = '';
-
     } catch (err) {
       alert('Could not reach the server. Check the API URL above.');
     } finally {
@@ -545,6 +637,89 @@
     }
   });
 
+  // ---------------- NEARBY CARE (location save + facility search) ----------------
+  const nearbyModal = document.getElementById('nearbyModal');
+  const nearbyBtn = document.getElementById('nearbyBtn');
+  const closeNearbyBtn = document.getElementById('closeNearbyBtn');
+  const savedAddressBox = document.getElementById('savedAddressBox');
+  const addressInput = document.getElementById('addressInput');
+  const saveAddressBtn = document.getElementById('saveAddressBtn');
+  const facilityTypeSelect = document.getElementById('facilityTypeSelect');
+  const searchNearbyBtn = document.getElementById('searchNearbyBtn');
+  const nearbyResults = document.getElementById('nearbyResults');
+
+  nearbyBtn.addEventListener('click', () => {
+    if (!currentPatientId) { addBubble('agent', 'Please select or register a patient first.'); return; }
+    nearbyResults.innerHTML = '';
+    savedAddressBox.style.display = 'none';
+    nearbyModal.style.display = 'flex';
+  });
+  closeNearbyBtn.addEventListener('click', () => { nearbyModal.style.display = 'none'; });
+
+  saveAddressBtn.addEventListener('click', async () => {
+    const address = addressInput.value.trim();
+    if (!address) { alert('Please enter an address.'); return; }
+
+    saveAddressBtn.disabled = true;
+    saveAddressBtn.textContent = 'Saving...';
+
+    try {
+      const res = await fetch(apiBase() + '/agent/update-location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ patient_id: currentPatientId, address })
+      });
+      const data = await res.json();
+
+      if (!res.ok) { alert('Could not save address: ' + (data.detail || 'unknown error')); return; }
+
+      savedAddressBox.style.display = 'block';
+      savedAddressBox.textContent = 'Saved location: ' + data.address;
+      addressInput.value = '';
+    } catch (err) {
+      alert('Could not reach the server while saving the address.');
+    } finally {
+      saveAddressBtn.disabled = false;
+      saveAddressBtn.textContent = 'Save address';
+    }
+  });
+
+  searchNearbyBtn.addEventListener('click', async () => {
+    const facilityType = facilityTypeSelect.value;
+    nearbyResults.innerHTML = '<div style="color:var(--ink-soft); font-size:13px;">Searching...</div>';
+
+    try {
+      const res = await fetch(apiBase() + '/agent/nearby-facilities/' + encodeURIComponent(currentPatientId) + '?facility_type=' + encodeURIComponent(facilityType));
+      const data = await res.json();
+
+      if (!res.ok) {
+        nearbyResults.innerHTML = '<div style="color:var(--high); font-size:13px;">' + (data.detail || 'Could not search nearby facilities.') + '</div>';
+        return;
+      }
+
+      const facilities = data.facilities || [];
+      if (!facilities.length) {
+        nearbyResults.innerHTML = '<div style="color:var(--ink-soft); font-size:13px;">No results found nearby. Try a different facility type or check your saved address.</div>';
+        return;
+      }
+
+      nearbyResults.innerHTML = '';
+      facilities.forEach(f => {
+        const card = document.createElement('div');
+        card.className = 'facility-card';
+        card.innerHTML = `
+          <div class="fname">${f.name}</div>
+          <div class="faddr">${f.address}${f.phone ? ' · ' + f.phone : ''}</div>
+          <a href="${f.maps_link}" target="_blank" rel="noopener">View on map</a>
+        `;
+        nearbyResults.appendChild(card);
+      });
+    } catch (err) {
+      nearbyResults.innerHTML = '<div style="color:var(--high); font-size:13px;">Could not reach the server.</div>';
+    }
+  });
+
+  // ---------------- MESSAGE RENDERING ----------------
   function clearEmptyState() {
     const empty = messagesEl.querySelector('.empty-state');
     if (empty) empty.remove();
@@ -554,10 +729,25 @@
     clearEmptyState();
     const row = document.createElement('div');
     row.className = 'row ' + role;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'bubble-wrap';
+
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
     bubble.textContent = text;
-    row.appendChild(bubble);
+    wrap.appendChild(bubble);
+
+    if (role === 'agent' && window.speechSynthesis) {
+      const listenBtn = document.createElement('button');
+      listenBtn.className = 'listen-btn';
+      listenBtn.title = 'Listen to this message';
+      listenBtn.innerHTML = '<svg viewBox="0 0 24 24" stroke="currentColor" fill="none"><path d="M4 9v6h4l5 5V4L8 9H4z"/><path d="M16.5 8.5a5 5 0 010 7"/></svg>';
+      listenBtn.addEventListener('click', () => speakText(text, listenBtn));
+      wrap.appendChild(listenBtn);
+    }
+
+    row.appendChild(wrap);
     messagesEl.appendChild(row);
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
@@ -570,7 +760,7 @@
       card.className = 'conflict-card ' + (c.severity || 'medium');
       const title = document.createElement('div');
       title.className = 'conflict-title';
-      title.innerHTML = `<span class="dot ${c.severity || 'medium'}"></span> ${c.type.replace('_', ' ')}  ${(c.severity || 'medium').toUpperCase()} priority`;
+      title.innerHTML = `<span class="dot ${c.severity || 'medium'}"></span> ${c.type.replace('_', ' ')} — ${(c.severity || 'medium').toUpperCase()} priority`;
       const msg = document.createElement('div');
       msg.textContent = c.message;
       card.appendChild(title);
@@ -610,7 +800,7 @@
         body: JSON.stringify({
           patient_id: currentPatientId,
           message: text,
-          conversation_history: history.slice(0, -1)
+          session_id: currentSessionId || null
         })
       });
       const data = await res.json();
@@ -620,14 +810,12 @@
         return;
       }
 
-      if (data.tool_calls_made && data.tool_calls_made.length) {
-        addToolTag(data.tool_calls_made);
-      }
+      if (data.session_id) currentSessionId = data.session_id;
+
+      if (data.tool_calls_made && data.tool_calls_made.length) addToolTag(data.tool_calls_made);
 
       const conflictData = data.structured_data && data.structured_data.check_medication_conflicts;
-      if (conflictData && conflictData.has_conflicts) {
-        addConflictCards(conflictData.conflicts);
-      }
+      if (conflictData && conflictData.has_conflicts) addConflictCards(conflictData.conflicts);
 
       addBubble('agent', data.reply);
       history.push({ role: 'assistant', content: data.reply });
@@ -642,12 +830,10 @@
 
   sendBtn.addEventListener('click', sendMessage);
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   });
 
+  // ---------------- DOCUMENT UPLOAD ----------------
   uploadBtn.addEventListener('click', () => fileInput.click());
 
   fileInput.addEventListener('change', async () => {
@@ -668,10 +854,7 @@
     formData.append('file', file);
 
     try {
-      const res = await fetch(apiBase() + '/agent/upload-document', {
-        method: 'POST',
-        body: formData
-      });
+      const res = await fetch(apiBase() + '/agent/upload-document', { method: 'POST', body: formData });
       const data = await res.json();
 
       if (!res.ok) {
@@ -683,7 +866,7 @@
       uploadStatus.textContent = '';
       const meds = (data.medications_added || []).map(m => `${m.name} (${m.dosage || 'dosage unclear'})`).join(', ');
       addBubble('agent', meds
-        ? `I read your document and found: ${meds}. I've added this to your record  please double check it's correct.`
+        ? `I read your document and found: ${meds}. I've added this to your record — please double check it's correct.`
         : `I read your document but couldn't confidently extract medicine details. You may want to try a clearer photo.`);
 
     } catch (err) {
@@ -702,7 +885,6 @@
 
   let seenNotificationIds = new Set();
 
-  // Ask permission once so we can show real OS/browser popups, not just the in-app badge.
   if (window.Notification && Notification.permission === 'default') {
     Notification.requestPermission();
   }
@@ -715,7 +897,7 @@
     }
     list.forEach(n => {
       const item = document.createElement('div');
-      item.style.cssText = 'padding:10px 10px; border-bottom:1px solid var(--line); font-size:13px; color:var(--ink); cursor:pointer;' + (n.is_read ? ' opacity:0.55;' : ' font-weight:600;');
+      item.style.cssText = 'padding:10px; border-bottom:1px solid var(--line); font-size:13px; color:var(--ink); cursor:pointer;' + (n.is_read ? ' opacity:0.55;' : ' font-weight:600;');
       item.textContent = n.message;
       item.title = new Date(n.created_at).toLocaleString();
       item.addEventListener('click', async () => {
@@ -735,7 +917,6 @@
       if (!res.ok) return;
       const data = await res.json();
 
-      // Fire a browser popup for any notification we haven't shown before.
       (data.notifications || []).forEach(n => {
         if (!n.is_read && !seenNotificationIds.has(n.id)) {
           seenNotificationIds.add(n.id);
@@ -751,18 +932,13 @@
       } else {
         notifBadge.style.display = 'none';
       }
-
       renderNotifications(data.notifications || []);
-    } catch (err) {
-      // Silent  polling failures shouldn't interrupt the chat experience.
-    }
+    } catch (err) { /* silent — polling failures shouldn't interrupt chat */ }
   }
 
   notifBell.addEventListener('click', () => {
     notifPanel.style.display = notifPanel.style.display === 'none' ? 'block' : 'none';
   });
-
-  // Poll every 20 seconds while the page is open.
   setInterval(pollNotifications, 20000);
 
   // ==================== REMINDERS ====================
@@ -791,7 +967,7 @@
           const row = document.createElement('div');
           row.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--line); font-size:13px; color:var(--ink);';
           const label = document.createElement('span');
-          label.textContent = `${r.medication_name}  ${r.reminder_time}${r.label ? ' (' + r.label + ')' : ''}`;
+          label.textContent = `${r.medication_name} — ${r.reminder_time}${r.label ? ' (' + r.label + ')' : ''}`;
           const delBtn = document.createElement('button');
           delBtn.textContent = 'Remove';
           delBtn.style.cssText = 'background:none; border:none; color:var(--high); cursor:pointer; font-size:12px;';
@@ -804,7 +980,6 @@
           reminderList.appendChild(row);
         });
       }
-
       await populateMedicineDropdown();
     } catch (err) {
       reminderList.innerHTML = '<div style="color:var(--ink-soft); font-size:13px;">Could not load reminders.</div>';
@@ -819,10 +994,9 @@
       const meds = data.medications || [];
 
       if (!meds.length) {
-        reminderMedSelect.innerHTML = '<option value="">No medicines on file  type the name below instead</option>';
+        reminderMedSelect.innerHTML = '<option value="">No medicines on file — type the name below instead</option>';
         return;
       }
-
       reminderMedSelect.innerHTML = '';
       meds.forEach(m => {
         const opt = document.createElement('option');
@@ -836,16 +1010,11 @@
   }
 
   remindersBtn.addEventListener('click', () => {
-    if (!currentPatientId) {
-      addBubble('agent', 'Please select or register a patient first.');
-      return;
-    }
+    if (!currentPatientId) { addBubble('agent', 'Please select or register a patient first.'); return; }
     remindersModal.style.display = 'flex';
     refreshReminderPanel();
   });
-  closeRemindersBtn.addEventListener('click', () => {
-    remindersModal.style.display = 'none';
-  });
+  closeRemindersBtn.addEventListener('click', () => { remindersModal.style.display = 'none'; });
 
   addReminderBtn.addEventListener('click', async () => {
     const medicationId = reminderMedSelect.value;
@@ -853,26 +1022,12 @@
     const time = reminderTimeInput.value;
     const label = reminderLabelInput.value.trim();
 
-    if (!medicationId && !customName) {
-      alert('Please pick a medicine from the list, or type its name manually.');
-      return;
-    }
-    if (!time) {
-      alert('Please pick a time.');
-      return;
-    }
+    if (!medicationId && !customName) { alert('Please pick a medicine from the list, or type its name manually.'); return; }
+    if (!time) { alert('Please pick a time.'); return; }
 
-    const payload = {
-      patient_id: currentPatientId,
-      reminder_time: time,
-      label: label || null,
-    };
-    // Custom typed name takes priority if both are somehow filled in.
-    if (customName) {
-      payload.medicine_name = customName;
-    } else {
-      payload.medication_id = medicationId;
-    }
+    const payload = { patient_id: currentPatientId, reminder_time: time, label: label || null };
+    if (customName) payload.medicine_name = customName;
+    else payload.medication_id = medicationId;
 
     try {
       const res = await fetch(apiBase() + '/agent/reminders', {
@@ -881,10 +1036,7 @@
         body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (!res.ok) {
-        alert('Could not add reminder: ' + (data.error || data.detail || 'unknown error'));
-        return;
-      }
+      if (!res.ok) { alert('Could not add reminder: ' + (data.error || data.detail || 'unknown error')); return; }
       reminderTimeInput.value = '';
       reminderLabelInput.value = '';
       reminderCustomNameInput.value = '';
@@ -895,12 +1047,5 @@
   });
 </script>
 
-  <script src="voice-feature-safe.js" defer></script>
 </body>
 </html>
-
-
-
-
-
-

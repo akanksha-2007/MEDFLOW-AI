@@ -1,13 +1,18 @@
-"""Safe SQLite database migration.
+"""Safe SQLite schema migration for MediFlow.
 
-This adds missing tables/columns only. Existing patients and data are not deleted.
-Run: py migrate_db.py
+Adds missing tables and columns only. It never drops tables or deletes data.
+Run from the project folder: python migrate_db.py
 """
-
 import sqlite3
+
 from models import Base, DATABASE_URL, engine
 
-DB_PATH = DATABASE_URL.replace("sqlite:///./", "")
+
+def get_database_path() -> str:
+    prefix = "sqlite:///./"
+    if not DATABASE_URL.startswith(prefix):
+        raise ValueError("This migration script expects a relative SQLite DATABASE_URL.")
+    return DATABASE_URL[len(prefix):]
 
 
 def get_existing_columns(cursor, table_name: str) -> set:
@@ -20,15 +25,18 @@ def get_existing_tables(cursor) -> set:
     return {row[0] for row in cursor.fetchall()}
 
 
-def migrate():
-    # Creates every table that exists in models.py but is missing in SQLite.
-    # It never drops existing tables or deletes records.
+def migrate() -> None:
+    # Creates new models.py tables such as chat_messages and symptom_logs.
+    # create_all never modifies/drops a table that already exists.
     Base.metadata.create_all(bind=engine)
 
-    conn = sqlite3.connect(DB_PATH)
-
+    conn = sqlite3.connect(get_database_path())
     try:
         cursor = conn.cursor()
+        existing_tables = get_existing_tables(cursor)
+        print(f"Existing tables: {sorted(existing_tables)}")
+
+        # SQLite needs ALTER TABLE for a new column on an existing table.
 
         column_additions = {
             "medication_reminders": [
@@ -40,22 +48,28 @@ def migrate():
                 ("longitude", "FLOAT"),
                 ("location_updated_at", "DATETIME"),
             ],
+            "chat_messages": [
+                ("session_id", "VARCHAR"),
+            ],
+            "medical_documents": [
+                ("extracted_summary", "TEXT"),
+                ("doctor_name", "VARCHAR"),
+                ("hospital_name", "VARCHAR"),
+                ("processed", "BOOLEAN"),
+            ],
+            "notifications": [
+                ("notification_type", "VARCHAR"),
+            ],
         }
-
-        existing_tables = get_existing_tables(cursor)
-        print(f"Existing tables: {sorted(existing_tables)}")
-
+        
         for table_name, columns in column_additions.items():
             if table_name not in existing_tables:
                 continue
 
             current_columns = get_existing_columns(cursor, table_name)
-
             for column_name, column_type in columns:
                 if column_name in current_columns:
-                    print(
-                        f"Column {table_name}.{column_name} already exists — skipping."
-                    )
+                    print(f"Column {table_name}.{column_name} already exists — skipping.")
                     continue
 
                 print(f"Adding column {table_name}.{column_name} ({column_type})...")
@@ -65,7 +79,6 @@ def migrate():
 
         conn.commit()
         print("Migration complete. No existing data was deleted.")
-
     finally:
         conn.close()
 

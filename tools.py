@@ -4,34 +4,190 @@ Each tool queries the database and returns structured data.
 """
 
 from datetime import datetime, timedelta
-from sqlalchemy.orm import Session
-from models import Patient, Consultation, Medication, Test, FollowUp, MedicalDocument, DocumentType
 from typing import List, Dict, Any, Optional
 import uuid
 import json
+import requests
+from math import asin, cos, radians, sin, sqrt
+
+from sqlalchemy.orm import Session
+
+from models import Patient, Consultation, Medication, Test, FollowUp, MedicalDocument, DocumentType
+
+
+# ==================== LOCATION / MAP HELPERS ====================
+
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+GEOCODE_HEADERS = {"User-Agent": "MediFlow-Healthcare-Agent/1.0"}
+
+FACILITY_TAG_MAP = {
+    "hospital": '["amenity"="hospital"]',
+    "pharmacy": '["amenity"="pharmacy"]',
+    "clinic": '["amenity"="clinic"]',
+    "doctor": '["amenity"="doctors"]',
+    "diagnostic_center": '["healthcare"="laboratory"]',
+}
+
+
+def geocode_address(address: str) -> Dict[str, Any]:
+    """
+    Convert free-text address into latitude/longitude using Nominatim.
+    """
+    if not address or not address.strip():
+        return {"error": "Empty address"}
+
+    try:
+        params = {"q": address, "format": "json", "limit": 1, "addressdetails": 1}
+        resp = requests.get(NOMINATIM_URL, params=params, headers=GEOCODE_HEADERS, timeout=10)
+        resp.raise_for_status()
+        results = resp.json()
+        if not results:
+            return {"error": f"Could not find a location matching: {address}. Try adding city and country."}
+
+        top = results[0]
+        return {
+            "latitude": float(top["lat"]),
+            "longitude": float(top["lon"]),
+            "display_name": top.get("display_name", address),
+        }
+    except requests.RequestException as e:
+        return {"error": f"Geocoding service unavailable: {str(e)}"}
+    except (KeyError, ValueError, IndexError, TypeError) as e:
+        return {"error": f"Geocoding parse error: {str(e)}"}
+
+
+def _save_patient_location(patient: Patient, db: Session, latitude: float, longitude: float, display_name: str = None):
+    patient.latitude = latitude
+    patient.longitude = longitude
+    patient.location_updated_at = datetime.utcnow()
+    if display_name and not patient.address:
+        patient.address = display_name
+    db.add(patient)
+    db.commit()
+    db.refresh(patient)
+    return patient
+
+
+def _get_patient_coordinates(patient: Patient, db: Session):
+    if patient.latitude is not None and patient.longitude is not None:
+        return {
+            "latitude": float(patient.latitude),
+            "longitude": float(patient.longitude),
+            "display_name": patient.address or f"{patient.latitude},{patient.longitude}",
+            "source": "saved_coordinates",
+        }
+
+    if patient.address:
+        geo = geocode_address(patient.address)
+        if geo and not geo.get("error"):
+            _save_patient_location(
+                patient=patient,
+                db=db,
+                latitude=geo["latitude"],
+                longitude=geo["longitude"],
+                display_name=geo.get("display_name"),
+            )
+            return {
+                "latitude": geo["latitude"],
+                "longitude": geo["longitude"],
+                "display_name": geo.get("display_name"),
+                "source": "geocoded_address",
+            }
+
+    return None
+
+
+def _distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    radius = 6371.0088
+    d_lat, d_lon = radians(lat2 - lat1), radians(lon2 - lon1)
+    a = sin(d_lat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(d_lon / 2) ** 2
+    return round(2 * radius * asin(sqrt(a)), 2)
+
+
+def _coordinates(element: dict) -> tuple:
+    if element.get("type") == "node":
+        return element.get("lat"), element.get("lon")
+    center = element.get("center") or {}
+    return center.get("lat"), center.get("lon")
+
+
+def _run_overpass_query(query: str) -> Optional[list]:
+    try:
+        resp = requests.post(OVERPASS_URL, data={"data": query}, headers=GEOCODE_HEADERS, timeout=20)
+        resp.raise_for_status()
+        return resp.json().get("elements", [])
+    except requests.RequestException:
+        return None
+
+
+def _build_query(latitude: float, longitude: float, radius_m: int, facility_type: Optional[str]) -> str:
+    if facility_type and facility_type.lower() in FACILITY_TAG_MAP:
+        clauses = [f'{FACILITY_TAG_MAP[facility_type.lower()]}(around:{radius_m},{latitude},{longitude});']
+    else:
+        clauses = [
+            f'node["amenity"="hospital"](around:{radius_m},{latitude},{longitude});',
+            f'way["amenity"="hospital"](around:{radius_m},{latitude},{longitude});',
+            f'node["amenity"="pharmacy"](around:{radius_m},{latitude},{longitude});',
+            f'way["amenity"="pharmacy"](around:{radius_m},{latitude},{longitude});',
+            f'node["amenity"="clinic"](around:{radius_m},{latitude},{longitude});',
+            f'way["amenity"="clinic"](around:{radius_m},{latitude},{longitude});',
+            f'node["amenity"="doctors"](around:{radius_m},{latitude},{longitude});',
+            f'way["amenity"="doctors"](around:{radius_m},{latitude},{longitude});',
+            f'node["healthcare"="laboratory"](around:{radius_m},{latitude},{longitude});',
+            f'way["healthcare"="laboratory"](around:{radius_m},{latitude},{longitude});',
+        ]
+    body = "\n  ".join(clauses)
+    return f"""[out:json][timeout:20];
+(
+  {body}
+);
+out center tags;"""
+
+
+def _elements_to_places(elements: list, latitude: float, longitude: float, specialty_wanted: Optional[str]) -> tuple:
+    matched, everything = [], []
+    for element in elements:
+        tags = element.get("tags", {})
+        lat, lon = _coordinates(element)
+        if lat is None or lon is None:
+            continue
+
+        street = " ".join(filter(None, [tags.get("addr:housenumber"), tags.get("addr:street")]))
+        address = ", ".join(filter(None, [street, tags.get("addr:city"), tags.get("addr:postcode")]))
+        place = {
+            "name": tags.get("name") or "Unnamed healthcare facility",
+            "type": (tags.get("healthcare") or tags.get("amenity") or "healthcare facility").replace("_", " ").title(),
+            "specialty": tags.get("healthcare:speciality") or tags.get("speciality"),
+            "address": address or None,
+            "phone": tags.get("phone") or tags.get("contact:phone"),
+            "website": tags.get("website") or tags.get("contact:website"),
+            "distance_km": _distance_km(latitude, longitude, float(lat), float(lon)),
+            "latitude": lat,
+            "longitude": lon,
+            "map_url": f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=17/{lat}/{lon}",
+        }
+        everything.append(place)
+
+        if specialty_wanted:
+            searchable = " ".join(str(tags.get(k, "")) for k in ("name", "healthcare:speciality", "speciality", "description")).casefold()
+            if specialty_wanted in searchable:
+                matched.append(place)
+
+    matched.sort(key=lambda p: p["distance_km"])
+    everything.sort(key=lambda p: p["distance_km"])
+    return matched, everything
 
 
 # ==================== TOOL 1: GET PATIENT TIMELINE ====================
 
 def get_patient_timeline(patient_id: str, db: Session) -> Dict[str, Any]:
-    """
-    Get all medical events for a patient in chronological order:
-    consultations, medications (active/past), tests, follow-ups.
-
-    Args:
-        patient_id: Patient ID
-        db: Database session
-
-    Returns:
-        Dict with timeline events sorted by date
-    """
     patient = db.query(Patient).filter(Patient.id == patient_id).first()
     if not patient:
         return {"error": f"Patient {patient_id} not found", "events": []}
 
     events = []
 
-    # Consultations
     consultations = db.query(Consultation).filter(
         Consultation.patient_id == patient_id
     ).order_by(Consultation.date.desc()).all()
@@ -47,7 +203,6 @@ def get_patient_timeline(patient_id: str, db: Session) -> Dict[str, Any]:
             "treatment_plan": consult.treatment_plan,
         })
 
-    # Medications
     medications = db.query(Medication).filter(
         Medication.patient_id == patient_id
     ).order_by(Medication.start_date.desc()).all()
@@ -68,7 +223,6 @@ def get_patient_timeline(patient_id: str, db: Session) -> Dict[str, Any]:
             "indication": med.indication,
         })
 
-    # Tests
     tests = db.query(Test).filter(
         Test.patient_id == patient_id
     ).order_by(Test.ordered_date.desc()).all()
@@ -84,7 +238,6 @@ def get_patient_timeline(patient_id: str, db: Session) -> Dict[str, Any]:
             "reference_range": test.reference_range,
         })
 
-    # Follow-ups
     followups = db.query(FollowUp).filter(
         FollowUp.patient_id == patient_id
     ).order_by(FollowUp.due_date.asc()).all()
@@ -98,7 +251,6 @@ def get_patient_timeline(patient_id: str, db: Session) -> Dict[str, Any]:
             "priority": followup.priority,
         })
 
-    # Sort by date (most recent first)
     events.sort(
         key=lambda x: x.get("date") or x.get("start_date") or x.get("ordered_date") or x.get("due_date") or datetime.min.isoformat(),
         reverse=True
@@ -115,7 +267,6 @@ def get_patient_timeline(patient_id: str, db: Session) -> Dict[str, Any]:
 # ==================== TOOL 2: CHECK MEDICATION CONFLICTS ====================
 
 def _date_ranges_overlap(start1, end1, start2, end2) -> bool:
-    """Safely check whether two date ranges overlap, guarding against None dates."""
     if not start1 or not start2:
         return False
     end1 = end1 or (datetime.utcnow() + timedelta(days=365))
@@ -124,27 +275,12 @@ def _date_ranges_overlap(start1, end1, start2, end2) -> bool:
 
 
 def check_medication_conflicts(patient_id: str, db: Session) -> Dict[str, Any]:
-    """
-    Check for medication conflicts:
-    - Duplicate prescriptions of the same medicine (overlapping dates)
-    - Overlapping prescriptions of DIFFERENT medicines from DIFFERENT providers
-      (uncoordinated care — the core "conflicting prescriptions" case)
-    - Known drug-drug interactions (simplified)
-
-    Args:
-        patient_id: Patient ID
-        db: Database session
-
-    Returns:
-        Dict with conflict warnings
-    """
     medications = db.query(Medication).filter(
         Medication.patient_id == patient_id
     ).all()
 
     conflicts = []
 
-    # ---- Case A: duplicate medicine name, overlapping dates ----
     med_names: Dict[str, List[Medication]] = {}
     for med in medications:
         if not med.name:
@@ -168,38 +304,36 @@ def check_medication_conflicts(patient_id: str, db: Session) -> Dict[str, Any]:
                             "medicine2": {"name": med2.name, "dosage": med2.dosage, "prescribed_by": med2.prescribed_by},
                         })
 
-    # ---- Case B: DIFFERENT medicines, overlapping dates, DIFFERENT providers ----
-    # This is the general "uncoordinated care" case the problem statement asks for —
-    # two different doctors prescribing different medicines during the same window
-    # without knowing about each other.
     for i, med1 in enumerate(medications):
         for med2 in medications[i + 1:]:
             if not med1.name or not med2.name:
                 continue
             if med1.name.lower().strip() == med2.name.lower().strip():
-                continue  # already covered by Case A
+                continue
             if not med1.prescribed_by or not med2.prescribed_by:
-                continue  # can't tell if providers differ
+                continue
             if med1.prescribed_by == med2.prescribed_by:
-                continue  # same doctor coordinating own prescriptions is not a conflict
+                continue
             if _date_ranges_overlap(med1.start_date, med1.end_date, med2.start_date, med2.end_date):
                 conflicts.append({
                     "type": "overlapping_prescription",
                     "severity": "medium",
-                    "message": f"'{med1.name}' (from {med1.prescribed_by}) and '{med2.name}' (from {med2.prescribed_by}) "
-                               f"overlap in time — these providers may not be aware of each other's prescriptions",
+                    "message": f"'{med1.name}' (from {med1.prescribed_by}) and '{med2.name}' (from {med2.prescribed_by}) overlap in time — these providers may not be aware of each other's prescriptions",
                     "medicine1": {"name": med1.name, "dosage": med1.dosage, "prescribed_by": med1.prescribed_by},
                     "medicine2": {"name": med2.name, "dosage": med2.dosage, "prescribed_by": med2.prescribed_by},
                 })
 
-    # ---- Case C: known drug-drug interactions (simplified reference list) ----
     known_interactions = {
         ("warfarin", "aspirin"): ("high", "Increased bleeding risk"),
         ("metformin", "contrast dye"): ("medium", "May cause kidney issues"),
         ("lisinopril", "potassium supplements"): ("medium", "High potassium risk"),
     }
 
-    active_meds = [m.name.lower().strip() for m in medications if m.name and (not m.end_date or m.end_date > datetime.utcnow())]
+    active_meds = [
+        m.name.lower().strip()
+        for m in medications
+        if m.name and (not m.end_date or m.end_date > datetime.utcnow())
+    ]
 
     for (drug1, drug2), (severity, reason) in known_interactions.items():
         if drug1 in active_meds and drug2 in active_meds:
@@ -222,16 +356,6 @@ def check_medication_conflicts(patient_id: str, db: Session) -> Dict[str, Any]:
 # ==================== TOOL 3: RECOMMEND SPECIALIST ====================
 
 def recommend_specialist(symptoms: str) -> Dict[str, Any]:
-    """
-    Recommend medical departments/specialists based on symptom description.
-    Uses simple keyword matching (in production, use ML model).
-
-    Args:
-        symptoms: Patient description of symptoms
-
-    Returns:
-        Dict with specialist recommendations
-    """
     symptoms_lower = symptoms.lower()
 
     specialist_map = {
@@ -279,80 +403,103 @@ def recommend_specialist(symptoms: str) -> Dict[str, Any]:
 
 # ==================== TOOL 4: EXPLAIN MEDICAL TERM ====================
 
-# ==================== TOOL 4: EXPLAIN MEDICAL TERM ====================
-
-def explain_medical_term(term: str, language: str = "english", llm_client=None) -> Dict[str, Any]:
-    """
-    ...docstring same rehne do...
-    """
+def explain_medical_term(term: str, language: str = "english") -> Dict[str, Any]:
     explanations = {
-        # ...jaisa hai waisa hi rehne do...
+        "hypertension": "High blood pressure - the force of blood against artery walls is too strong",
+        "diabetes": "A condition where the body cannot properly control blood sugar levels",
+        "arthritis": "Inflammation of the joints causing pain and stiffness",
+        "asthma": "A lung condition that makes breathing difficult, especially during allergies or exercise",
+        "atrial fibrillation": "Irregular heartbeat that can increase stroke risk",
+        "gerd": "Acid reflux - stomach acid flows back into the food pipe causing heartburn",
+        "osteoporosis": "Bones become weak and brittle, increasing fracture risk",
+        "cholesterol": "A fatty substance in blood; high levels can lead to heart disease",
+        "pneumonia": "Lung infection causing inflammation and fluid buildup",
+        "anemia": "Low red blood cell count, causing fatigue and weakness",
+        "migraine": "A severe, often one-sided headache, sometimes with nausea or light sensitivity",
+        "thyroid": "A gland in the neck that controls metabolism; too much or too little hormone causes symptoms",
+        "jaundice": "Yellowing of skin/eyes caused by a buildup of bilirubin, often linked to liver issues",
+        "dehydration": "The body has lost more fluid than it has taken in",
+        "metformin": "A medicine for diabetes that helps lower blood sugar by reducing glucose production",
+        "lisinopril": "A blood pressure medicine that helps relax blood vessels",
+        "aspirin": "A pain reliever and blood thinner that reduces fever and heart attack risk",
+        "amoxicillin": "An antibiotic used to treat bacterial infections",
+        "ibuprofen": "A pain reliever and anti-inflammatory for aches and fevers",
+        "warfarin": "A blood thinner that prevents clots (requires regular blood tests)",
+        "paracetamol": "A common medicine for fever and mild pain relief",
     }
 
     translations_hi = {
-        # ...jaisa hai waisa hi rehne do...
+        "hypertension": "हाई ब्लड प्रेशर - रक्त वाहिकाओं पर दबाव सामान्य से ज़्यादा है",
+        "diabetes": "मधुमेह - शरीर रक्त शर्करा को ठीक से नियंत्रित नहीं कर पाता",
+        "arthritis": "जोड़ों में सूजन जिससे दर्द और अकड़न होती है",
+        "asthma": "सांस लेने में तकलीफ करने वाली फेफड़ों की बीमारी",
+        "cholesterol": "खून में मौजूद एक चिकनाईयुक्त पदार्थ; ज़्यादा होने पर दिल की बीमारी का खतरा",
+        "metformin": "डायबिटीज़ की दवा जो रक्त शर्करा कम करने में मदद करती है",
+        "lisinopril": "ब्लड प्रेशर की दवा जो रक्त वाहिकाओं को आराम देती है",
+        "aspirin": "दर्द निवारक और खून पतला करने वाली दवा",
+        "paracetamol": "बुखार और हल्के दर्द के लिए आम दवा",
     }
 
+    translations_pa = {
+        "hypertension": "ਹਾਈ ਬਲੱਡ ਪ੍ਰੈਸ਼ਰ - ਖੂਨ ਦੀਆਂ ਨਾੜੀਆਂ 'ਤੇ ਦਬਾਅ ਆਮ ਨਾਲੋਂ ਵੱਧ ਹੈ",
+        "diabetes": "ਸ਼ੂਗਰ - ਸਰੀਰ ਖੂਨ ਵਿੱਚ ਸ਼ੂਗਰ ਨੂੰ ਠੀਕ ਤਰ੍ਹਾਂ ਕੰਟਰੋਲ ਨਹੀਂ ਕਰ ਪਾਉਂਦਾ",
+        "metformin": "ਸ਼ੂਗਰ ਦੀ ਦਵਾਈ ਜੋ ਖੂਨ ਵਿੱਚ ਸ਼ੂਗਰ ਘਟਾਉਣ ਵਿੱਚ ਮਦਦ ਕਰਦੀ ਹੈ",
+        "aspirin": "ਦਰਦ ਘਟਾਉਣ ਅਤੇ ਖੂਨ ਪਤਲਾ ਕਰਨ ਵਾਲੀ ਦਵਾਈ",
+    }
+
+    def to_hinglish(english_text: str, term_name: str) -> str:
+        return f"{term_name.title()} matlab: {english_text.lower()}"
+
     term_lower = term.lower().strip()
-    explanation = explanations.get(term_lower, None)
-    used_llm_fallback = False
+    base_explanation = explanations.get(term_lower)
+    lang = language.lower()
 
-    if explanation is None:
-        if llm_client is None:
+    if base_explanation is None:
+        try:
             from llm import get_llm_client
             llm_client = get_llm_client()
-        prompt = (
-            f"Explain the medical term or medicine '{term}' in one or two short, simple "
-            f"sentences for an elderly patient with no medical background. No dosing advice. "
-            f"Respond ONLY in {language} language, plain text."
-        )
-        llm_resp = llm_client.call_with_functions(
-            messages=[{"role": "user", "content": prompt}],
-            system_prompt="You explain medical terms in extremely simple, patient-friendly language.",
-        )
-        if llm_resp.get("success") and llm_resp.get("content"):
-            explanation = llm_resp["content"].strip()
-            used_llm_fallback = True
-        else:
-            explanation = f"I don't have a specific explanation for '{term}'. Please ask your doctor for details."
+            lang_instruction = {
+                "hindi": "in simple Hindi (Devanagari script)",
+                "hi": "in simple Hindi (Devanagari script)",
+                "punjabi": "in simple Punjabi (Gurmukhi script)",
+                "pa": "in simple Punjabi (Gurmukhi script)",
+                "hinglish": "in casual Hinglish (Hindi-English mix, Roman script)",
+            }.get(lang, "in simple English")
 
-    elif language.lower() in ["hindi", "hi"] and term_lower in translations_hi:
-        explanation = translations_hi[term_lower]
-
-    elif language.lower() not in ["english", "en"]:
-        if llm_client is None:
-            from llm import get_llm_client
-            llm_client = get_llm_client()
-        llm_resp = llm_client.call_with_functions(
-            messages=[{"role": "user", "content": f"Translate this into simple, everyday {language}:\n\n{explanation}"}],
-            system_prompt="You translate medical explanations into simple everyday language.",
-        )
-        if llm_resp.get("success") and llm_resp.get("content"):
-            explanation = llm_resp["content"].strip()
-            used_llm_fallback = True
+            resp = llm_client.call_with_functions(
+                messages=[{
+                    "role": "user",
+                    "content": f"In one short sentence, explain what '{term}' means in medicine, {lang_instruction}, for a patient with no medical background. Do not diagnose or give dosing advice — just define the term."
+                }],
+                system_prompt="You are a medical term explainer. Respond with ONLY the one-sentence explanation, nothing else.",
+            )
+            if resp.get("success") and resp.get("content"):
+                explanation = resp["content"].strip()
+            else:
+                explanation = f"I don't have a specific explanation for '{term}' yet. Please ask your doctor for details."
+        except Exception:
+            explanation = f"I don't have a specific explanation for '{term}' yet. Please ask your doctor for details."
+    else:
+        explanation = base_explanation
+        if lang in ("hindi", "hi") and term_lower in translations_hi:
+            explanation = translations_hi[term_lower]
+        elif lang in ("punjabi", "pa") and term_lower in translations_pa:
+            explanation = translations_pa[term_lower]
+        elif lang == "hinglish":
+            explanation = to_hinglish(base_explanation, term_lower)
 
     return {
         "term": term,
         "language": language,
         "explanation": explanation,
-        "source": "llm_translation" if used_llm_fallback else "healthcare_database",
+        "source": "healthcare_database",
         "recommendation": "For detailed medical information, consult your healthcare provider."
     }
+
 
 # ==================== TOOL 5: GET UPCOMING FOLLOWUPS ====================
 
 def get_upcoming_followups(patient_id: str, db: Session, days_ahead: int = 30) -> Dict[str, Any]:
-    """
-    Get pending follow-ups and due dates for the next N days.
-
-    Args:
-        patient_id: Patient ID
-        db: Database session
-        days_ahead: How many days ahead to check (default 30)
-
-    Returns:
-        Dict with pending follow-ups
-    """
     patient = db.query(Patient).filter(Patient.id == patient_id).first()
     if not patient:
         return {"error": f"Patient {patient_id} not found", "followups": []}
@@ -410,7 +557,7 @@ def get_upcoming_followups(patient_id: str, db: Session, days_ahead: int = 30) -
     }
 
 
-# ==================== TOOL 6: UPLOAD & EXTRACT DOCUMENT (Module 2 — was missing) ====================
+# ==================== TOOL 6: UPLOAD & EXTRACT DOCUMENT ====================
 
 def save_document_and_extract(
     patient_id: str,
@@ -419,26 +566,10 @@ def save_document_and_extract(
     db: Session,
     llm_client=None,
 ) -> Dict[str, Any]:
-    """
-    Save an uploaded medical document, run OCR on it, use the LLM to convert
-    the raw OCR text into structured fields, store the document record, and
-    (for prescriptions) insert extracted medicines into the Medication table.
-
-    Args:
-        patient_id: Patient ID
-        file_path: Path to the uploaded file on disk
-        document_type: One of "prescription", "report", "discharge_summary"
-        db: Database session
-        llm_client: Optional LLM client (falls back to get_llm_client() if not passed)
-
-    Returns:
-        Dict with the extracted structured data, ready for the patient to confirm
-    """
     patient = db.query(Patient).filter(Patient.id == patient_id).first()
     if not patient:
         return {"error": f"Patient {patient_id} not found"}
 
-    # ---- Step 1: OCR ----
     try:
         import pytesseract
         from PIL import Image
@@ -449,7 +580,6 @@ def save_document_and_extract(
     if not raw_text:
         return {"error": "OCR could not read any text from this file. Please upload a clearer image."}
 
-    # ---- Step 2: structure the OCR text via LLM ----
     if llm_client is None:
         from llm import get_llm_client
         llm_client = get_llm_client()
@@ -457,16 +587,14 @@ def save_document_and_extract(
     if document_type == "prescription":
         extraction_prompt = (
             "Extract every medicine from this prescription text as a JSON array. "
-            'Each item must have exactly these fields: "medicine_name", "dosage", '
-            '"frequency", "prescribed_by". If a field is not present in the text, use null. '
-            "Respond with ONLY the JSON array, no other text.\n\n"
+            'Each item must have exactly these fields: "medicine_name", "dosage", "frequency", "prescribed_by". '
+            "If a field is not present in the text, use null. Respond with ONLY the JSON array, no other text.\n\n"
             f"Prescription text:\n{raw_text}"
         )
     else:
         extraction_prompt = (
             "Summarize this medical report/discharge summary as JSON with exactly these fields: "
-            '"summary_text", "key_findings" (a list of short strings), '
-            '"follow_up_needed" (true/false). '
+            '"summary_text", "key_findings" (a list of short strings), "follow_up_needed" (true/false). '
             "Respond with ONLY the JSON object, no other text.\n\n"
             f"Document text:\n{raw_text}"
         )
@@ -480,7 +608,6 @@ def save_document_and_extract(
         return {"error": f"Extraction failed: {llm_response.get('error')}"}
 
     raw_content = (llm_response.get("content") or "").strip()
-    # Strip markdown code fences if the model wrapped its JSON in them
     if raw_content.startswith("```"):
         raw_content = raw_content.strip("`")
         raw_content = raw_content.replace("json", "", 1).strip()
@@ -490,7 +617,6 @@ def save_document_and_extract(
     except json.JSONDecodeError:
         return {"error": "Could not parse extracted data. Please try re-uploading the document.", "raw_extraction": raw_content}
 
-    # ---- Step 3: save the document record ----
     doc = MedicalDocument(
         id=str(uuid.uuid4()),
         patient_id=patient_id,
@@ -503,7 +629,6 @@ def save_document_and_extract(
     db.commit()
     db.refresh(doc)
 
-    # ---- Step 4: for prescriptions, insert extracted medicines ----
     inserted_medications = []
     if document_type == "prescription" and isinstance(structured_data, list):
         for item in structured_data:
@@ -538,31 +663,103 @@ def save_document_and_extract(
         "medications_added": inserted_medications,
         "note": "Please review the extracted data below before it's treated as final.",
     }
-    # Paste this complete function at the BOTTOM of your existing tools.py.
-# Do not replace the rest of tools.py.
 
-def find_nearby_doctors(patient_id: str, specialty: str | None = None,
-                        radius_km: float = 5, db=None) -> dict:
-    """Find nearby OSM healthcare listings using the patient's saved location."""
-    from maps import search_nearby_healthcare
-    from models import Patient, SessionLocal
 
-    owns_session = db is None
-    if owns_session:
-        db = SessionLocal()
+# ==================== TOOL 7: NEARBY FACILITIES ====================
+
+def find_nearby_facilities(patient_id: str, facility_type: str, db: Session, radius_meters: int = 5000) -> Dict[str, Any]:
+    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    if not patient:
+        return {"error": "Patient not found", "count": 0, "facilities": []}
+
+    coords = _get_patient_coordinates(patient, db)
+    if not coords:
+        return {
+            "error": "No saved location for this patient yet. Please save an address first.",
+            "patient_location": None,
+            "location_source": None,
+            "count": 0,
+            "facilities": [],
+        }
+
+    facility_type = (facility_type or "hospital").lower().strip()
+    if facility_type not in FACILITY_TAG_MAP:
+        facility_type = "hospital"
+
+    lat = coords["latitude"]
+    lon = coords["longitude"]
+    tag_filter = FACILITY_TAG_MAP[facility_type]
+
+    query = f"""
+    [out:json];[11]
+    (
+      node{tag_filter}(around:{radius_meters},{lat},{lon});
+      way{tag_filter}(around:{radius_meters},{lat},{lon});
+    );
+    out center tags;
+    """
+
     try:
-        patient = db.query(Patient).filter(Patient.id == patient_id).first()
-        if not patient:
-            return {"error": "Patient not found."}
-        if patient.latitude is None or patient.longitude is None:
-            return {
-                "error": "Location not available.",
-                "message": "Please save your location first, then I can find nearby doctors and clinics.",
-            }
-        return search_nearby_healthcare(
-            float(patient.latitude), float(patient.longitude),
-            specialty=specialty, radius_km=radius_km,
-        )
-    finally:
-        if owns_session:
-            db.close()
+        resp = requests.post(OVERPASS_URL, data={"data": query}, headers=GEOCODE_HEADERS, timeout=20)
+        resp.raise_for_status()
+        elements = resp.json().get("elements", [])
+    except requests.RequestException as e:
+        return {"error": f"Location search service unavailable right now: {str(e)}", "count": 0, "facilities": []}
+
+    facilities = []
+    for el in elements:
+        tags = el.get("tags", {})
+        name = tags.get("name")
+        if not name:
+            continue
+
+        el_lat = el.get("lat") or (el.get("center") or {}).get("lat")
+        el_lon = el.get("lon") or (el.get("center") or {}).get("lon")
+        if el_lat is None or el_lon is None:
+            continue
+
+        address_parts = [
+            tags.get("addr:housenumber"),
+            tags.get("addr:street"),
+            tags.get("addr:city"),
+            tags.get("addr:postcode"),
+        ]
+        address = ", ".join([p for p in address_parts if p]) or "Exact address not listed in map data"
+        facilities.append({
+            "name": name,
+            "address": address,
+            "latitude": el_lat,
+            "longitude": el_lon,
+            "phone": tags.get("phone") or tags.get("contact:phone"),
+            "maps_link": f"https://www.openstreetmap.org/?mlat={el_lat}&mlon={el_lon}#map=18/{el_lat}/{el_lon}",
+        })
+
+    facilities = facilities[:10]
+    return {
+        "facility_type": facility_type,
+        "patient_location": coords["display_name"],
+        "location_source": coords["source"],
+        "count": len(facilities),
+        "facilities": facilities,
+    }
+
+
+def find_nearby_doctors(
+    patient_id: str,
+    specialty: Optional[str] = None,
+    facility_type: Optional[str] = None,
+    radius_km: float = 5,
+    db: Session = None
+) -> Dict[str, Any]:
+    if db is None:
+        return {"error": "Database session is required", "count": 0, "facilities": []}
+
+    result = find_nearby_facilities(
+        patient_id=patient_id,
+        facility_type=facility_type or "hospital",
+        db=db,
+        radius_meters=int(radius_km * 1000),
+    )
+    if specialty:
+        result["specialty_requested"] = specialty
+    return result
