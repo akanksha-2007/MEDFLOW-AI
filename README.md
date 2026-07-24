@@ -580,6 +580,8 @@ print(response.json())
 - **seed_data.py** - Sample data generator
 - **requirements.txt** - Python dependencies
 
-## License
+## Licens
 
 MIT
+
+##Available at your primary URL https://medflow-ai-4.onrender.com
