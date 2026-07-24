@@ -17,6 +17,8 @@
     --high-bg: #FBEAE6;
     --medium: #B9873A;
     --medium-bg: #FBF1E2;
+    --good: #2E7D4F;
+    --good-bg: #E7F5EC;
     --user-bubble: #285C55;
     --agent-bubble: #FFFFFF;
     --radius: 14px;
@@ -38,6 +40,8 @@
     --high-bg: #3A241F;
     --medium: #E0B368;
     --medium-bg: #3A2F1C;
+    --good: #6FCB94;
+    --good-bg: #1D3327;
     --user-bubble: #2F6E63;
     --agent-bubble: #223029;
     --input-bg: #223029;
@@ -74,7 +78,7 @@
   .brand h1 { font-size: 19px; margin: 0; letter-spacing: 0.2px; font-weight: 600; }
   .brand span { font-size: 12px; color: #B9CFC9; }
 
-  .controls { display: flex; gap: 10px; align-items: center; font-size: 13px; }
+  .controls { display: flex; gap: 10px; align-items: center; font-size: 13px; flex-wrap: wrap; }
 
   .controls input, .controls select {
     background: var(--input-bg);
@@ -218,6 +222,7 @@
     align-items: center; justify-content: center; z-index: 20;
   }
   .modal-box { background: var(--panel); border-radius: 16px; padding: 24px; width: 340px; max-height: 80vh; overflow-y: auto; box-shadow: 0 12px 32px rgba(0,0,0,0.2); }
+  .modal-box.wide { width: 460px; }
   .modal-box h3 { margin: 0 0 14px 0; font-size: 16px; color: var(--ink); }
   .modal-box input, .modal-box select {
     width: 100%; padding: 9px 10px; margin-bottom: 8px; border: 1px solid var(--line);
@@ -241,6 +246,27 @@
   .facility-card .faddr { color: var(--ink-soft); margin-bottom: 4px; }
   .facility-card a { color: var(--teal); font-size: 12.5px; text-decoration: none; }
   .saved-address { font-size: 12px; color: var(--ink-soft); margin-bottom: 10px; padding: 8px 10px; background: var(--tool-tag-bg); border-radius: 8px; }
+
+  .session-item {
+    padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px;
+    cursor: pointer; font-size: 13px; color: var(--ink);
+  }
+  .session-item:hover { border-color: var(--teal); }
+  .session-item .stitle { font-weight: 600; margin-bottom: 2px; }
+  .session-item .sdate { font-size: 11.5px; color: var(--ink-soft); }
+
+  .dash-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+  .dash-card { border: 1px solid var(--line); border-radius: 10px; padding: 12px; text-align: center; }
+  .dash-card .num { font-size: 22px; font-weight: 700; color: var(--teal); }
+  .dash-card .lbl { font-size: 11.5px; color: var(--ink-soft); margin-top: 2px; }
+  .dash-card.warn .num { color: var(--high); }
+  .dash-section-title { font-size: 13px; font-weight: 600; color: var(--ink); margin: 14px 0 8px 0; }
+  .dash-row {
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; font-size: 12.5px; color: var(--ink);
+  }
+  .dash-row .drow-title { font-weight: 600; }
+  .dash-row .drow-sub { color: var(--ink-soft); font-size: 11.5px; }
+  .dash-empty { color: var(--ink-soft); font-size: 12.5px; padding: 4px 0; }
 </style>
 </head>
 <body>
@@ -251,7 +277,7 @@
     <span>Care Companion</span>
   </div>
   <div class="controls">
-    <input id="apiBase" placeholder="API URL" size="24" />
+    <input id="apiBase" placeholder="API URL" size="20" />
     <select id="patientSelect">
       <option value="">Loading patients...</option>
     </select>
@@ -264,6 +290,14 @@
     <button class="icon-btn labeled" id="newChatBtn" title="Start a new conversation">
       <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
       New chat
+    </button>
+
+    <button class="icon-btn" id="historyBtn" title="Chat history">
+      <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 109-9 9.75 9.75 0 00-7 3L3 8"/><path d="M3 3v5h5M12 7v5l4 2"/></svg>
+    </button>
+
+    <button class="icon-btn" id="dashboardBtn" title="Care dashboard">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
     </button>
 
     <button class="icon-btn" id="nearbyBtn" title="Find nearby care">
@@ -358,6 +392,26 @@
   </div>
 </div>
 
+<div id="historyModal" class="modal-overlay">
+  <div class="modal-box">
+    <h3>Chat history</h3>
+    <div id="sessionList"><div class="dash-empty">Loading...</div></div>
+    <div class="modal-actions">
+      <button id="closeHistoryBtn" class="btn-secondary">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="dashboardModal" class="modal-overlay">
+  <div class="modal-box wide">
+    <h3>Care journey dashboard</h3>
+    <div id="dashboardContent"><div class="dash-empty">Loading...</div></div>
+    <div class="modal-actions">
+      <button id="closeDashboardBtn" class="btn-secondary">Close</button>
+    </div>
+  </div>
+</div>
+
 <main>
   <div class="chat-shell">
     <div id="messages">
@@ -432,11 +486,14 @@
   if (SpeechRecognition) {
     recognizer = new SpeechRecognition();
     recognizer.continuous = false;
-    recognizer.interimResults = false;
+    recognizer.interimResults = true;
 
     recognizer.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
-      input.value = (input.value ? input.value + ' ' : '') + transcript;
+      let transcript = '';
+      for (let i = 0; i < event.results.length; i++) {
+        transcript += event.results[i][0].transcript;
+      }
+      input.value = transcript;
     };
     recognizer.onend = () => {
       isRecording = false;
@@ -563,6 +620,136 @@
     }
   });
 
+  // ---------------- CHAT HISTORY (view + switch past sessions) ----------------
+  const historyModal = document.getElementById('historyModal');
+  const historyBtn = document.getElementById('historyBtn');
+  const closeHistoryBtn = document.getElementById('closeHistoryBtn');
+  const sessionListEl = document.getElementById('sessionList');
+
+  historyBtn.addEventListener('click', async () => {
+    if (!currentPatientId) { addBubble('agent', 'Please select or register a patient first.'); return; }
+    historyModal.style.display = 'flex';
+    sessionListEl.innerHTML = '<div class="dash-empty">Loading...</div>';
+
+    try {
+      const res = await fetch(apiBase() + '/agent/chat/sessions/' + encodeURIComponent(currentPatientId));
+      const data = await res.json();
+      const sessions = data.sessions || [];
+
+      if (!sessions.length) {
+        sessionListEl.innerHTML = '<div class="dash-empty">No past conversations yet.</div>';
+        return;
+      }
+
+      sessionListEl.innerHTML = '';
+      sessions.forEach(s => {
+        const item = document.createElement('div');
+        item.className = 'session-item';
+        const dateStr = s.last_message_at ? new Date(s.last_message_at).toLocaleString() : '';
+        const msgCount = (s.messages || []).length;
+        item.innerHTML = `
+          <div class="stitle">${s.title || 'Conversation'}${s.id === currentSessionId ? ' (current)' : ''}</div>
+          <div class="sdate">${dateStr} · ${msgCount} messages</div>
+        `;
+        item.addEventListener('click', () => {
+          currentSessionId = s.id;
+          history = [];
+          messagesEl.innerHTML = '';
+          const msgs = s.messages || [];
+          if (!msgs.length) {
+            messagesEl.innerHTML = EMPTY_STATE_HTML;
+          } else {
+            msgs.forEach(m => {
+              addBubble(m.role === 'user' ? 'user' : 'agent', m.content);
+              history.push({ role: m.role, content: m.content });
+            });
+          }
+          historyModal.style.display = 'none';
+        });
+        sessionListEl.appendChild(item);
+      });
+    } catch (err) {
+      sessionListEl.innerHTML = '<div class="dash-empty">Could not load chat history.</div>';
+    }
+  });
+  closeHistoryBtn.addEventListener('click', () => { historyModal.style.display = 'none'; });
+
+  // ---------------- DASHBOARD ----------------
+  const dashboardModal = document.getElementById('dashboardModal');
+  const dashboardBtn = document.getElementById('dashboardBtn');
+  const closeDashboardBtn = document.getElementById('closeDashboardBtn');
+  const dashboardContent = document.getElementById('dashboardContent');
+
+  dashboardBtn.addEventListener('click', async () => {
+    if (!currentPatientId) { addBubble('agent', 'Please select or register a patient first.'); return; }
+    dashboardModal.style.display = 'flex';
+    dashboardContent.innerHTML = '<div class="dash-empty">Loading...</div>';
+
+    try {
+      const res = await fetch(apiBase() + '/agent/dashboard/' + encodeURIComponent(currentPatientId));
+      const data = await res.json();
+
+      if (!res.ok) {
+        dashboardContent.innerHTML = '<div class="dash-empty">' + (data.detail || 'Could not load dashboard.') + '</div>';
+        return;
+      }
+
+      const s = data.summary || {};
+      let html = '<div class="dash-grid">';
+      html += `<div class="dash-card"><div class="num">${s.completed_consultations ?? 0}</div><div class="lbl">Completed consultations</div></div>`;
+      html += `<div class="dash-card"><div class="num">${s.pending_appointments ?? 0}</div><div class="lbl">Pending appointments</div></div>`;
+      html += `<div class="dash-card"><div class="num">${s.active_medications ?? 0}</div><div class="lbl">Active medications</div></div>`;
+      html += `<div class="dash-card${s.overdue_followups ? ' warn' : ''}"><div class="num">${s.upcoming_followups ?? 0}</div><div class="lbl">Upcoming follow-ups</div></div>`;
+      html += `<div class="dash-card${s.overdue_followups ? ' warn' : ''}"><div class="num">${s.overdue_followups ?? 0}</div><div class="lbl">Overdue follow-ups</div></div>`;
+      html += `<div class="dash-card"><div class="num">${s.diagnostic_tests_total ?? 0}</div><div class="lbl">Diagnostic tests on file</div></div>`;
+      html += '</div>';
+
+      if (s.has_medication_conflicts) {
+        html += `<div class="conflict-card high" style="max-width:100%; margin-bottom:14px;">
+          <div class="conflict-title"><span class="dot high"></span> ${s.conflict_count} medication conflict(s) detected</div>
+          <div>Open the chat and ask "check my medicines" for details.</div>
+        </div>`;
+      }
+
+      html += '<div class="dash-section-title">Active medications</div>';
+      const meds = data.active_medications || [];
+      if (!meds.length) {
+        html += '<div class="dash-empty">No active medications on file.</div>';
+      } else {
+        meds.forEach(m => {
+          html += `<div class="dash-row"><div class="drow-title">${m.name}${m.dosage ? ' — ' + m.dosage : ''}</div><div class="drow-sub">${m.frequency || ''}${m.prescribed_by ? ' · ' + m.prescribed_by : ''}</div></div>`;
+        });
+      }
+
+      html += '<div class="dash-section-title">Upcoming follow-ups</div>';
+      const fups = data.upcoming_followups || [];
+      if (!fups.length) {
+        html += '<div class="dash-empty">No upcoming follow-ups.</div>';
+      } else {
+        fups.forEach(f => {
+          const due = f.due_date ? new Date(f.due_date).toLocaleDateString() : '';
+          html += `<div class="dash-row"><div class="drow-title">${f.action}</div><div class="drow-sub">Due ${due}${f.days_until != null ? ' · in ' + f.days_until + ' days' : ''}</div></div>`;
+        });
+      }
+
+      html += '<div class="dash-section-title">Diagnostic history</div>';
+      const tests = data.diagnostic_history || [];
+      if (!tests.length) {
+        html += '<div class="dash-empty">No diagnostic tests on file.</div>';
+      } else {
+        tests.forEach(t => {
+          const d = t.ordered_date ? new Date(t.ordered_date).toLocaleDateString() : '';
+          html += `<div class="dash-row"><div class="drow-title">${t.test_name}</div><div class="drow-sub">${d}${t.status ? ' · ' + t.status : ''}${t.result_value ? ' · ' + t.result_value : ''}</div></div>`;
+        });
+      }
+
+      dashboardContent.innerHTML = html;
+    } catch (err) {
+      dashboardContent.innerHTML = '<div class="dash-empty">Could not reach the server.</div>';
+    }
+  });
+  closeDashboardBtn.addEventListener('click', () => { dashboardModal.style.display = 'none'; });
+
   async function loadPatients(selectId) {
     try {
       const res = await fetch(apiBase() + '/agent/patients');
@@ -671,7 +858,7 @@
       });
       const data = await res.json();
 
-      if (!res.ok) { alert('Could not save address: ' + (data.detail || 'unknown error')); return; }
+      if (!res.ok) { alert('Could not save address: ' + (data.detail || 'unknown error') + ' — check that the server is running the latest main.py with the /agent/update-location endpoint.'); return; }
 
       savedAddressBox.style.display = 'block';
       savedAddressBox.textContent = 'Saved location: ' + data.address;

@@ -763,3 +763,106 @@ def find_nearby_doctors(
     if specialty:
         result["specialty_requested"] = specialty
     return result
+    # ==================== TOOL 8: PATIENT DASHBOARD ====================
+
+def get_patient_dashboard(patient_id: str, db: Session) -> Dict[str, Any]:
+    """
+    Build a structured dashboard for the patient: completed consultations,
+    pending appointments, active medications, upcoming follow-ups, and
+    diagnostic history — used by the frontend dashboard view, not the chat agent.
+    """
+    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    if not patient:
+        return {"error": f"Patient {patient_id} not found"}
+
+    now = datetime.utcnow()
+
+    consultations = db.query(Consultation).filter(
+        Consultation.patient_id == patient_id
+    ).order_by(Consultation.date.desc()).all()
+
+    completed_consultations = [c for c in consultations if c.date and c.date <= now]
+    pending_appointments = [c for c in consultations if c.date and c.date > now]
+
+    medications = db.query(Medication).filter(Medication.patient_id == patient_id).all()
+    active_medications = [m for m in medications if not m.end_date or m.end_date > now]
+
+    followups = db.query(FollowUp).filter(FollowUp.patient_id == patient_id).all()
+    upcoming_followups = sorted(
+        [f for f in followups if f.status == "pending" and f.due_date and f.due_date >= now],
+        key=lambda f: f.due_date
+    )
+    overdue_followups = [f for f in followups if f.status == "pending" and f.due_date and f.due_date < now]
+
+    tests = db.query(Test).filter(Test.patient_id == patient_id).order_by(Test.ordered_date.desc()).all()
+
+    conflicts_result = check_medication_conflicts(patient_id, db)
+
+    return {
+        "patient_id": patient_id,
+        "patient_name": patient.name,
+        "summary": {
+            "completed_consultations": len(completed_consultations),
+            "pending_appointments": len(pending_appointments),
+            "active_medications": len(active_medications),
+            "upcoming_followups": len(upcoming_followups),
+            "overdue_followups": len(overdue_followups),
+            "diagnostic_tests_total": len(tests),
+            "has_medication_conflicts": conflicts_result.get("has_conflicts", False),
+            "conflict_count": conflicts_result.get("conflict_count", 0),
+        },
+        "completed_consultations": [
+            {
+                "date": c.date.isoformat() if c.date else None,
+                "doctor": c.doctor_name,
+                "department": c.department,
+                "diagnosis": c.diagnosis,
+            }
+            for c in completed_consultations[:10]
+        ],
+        "pending_appointments": [
+            {
+                "date": c.date.isoformat() if c.date else None,
+                "doctor": c.doctor_name,
+                "department": c.department,
+                "chief_complaint": c.chief_complaint,
+            }
+            for c in pending_appointments
+        ],
+        "active_medications": [
+            {
+                "name": m.name,
+                "dosage": m.dosage,
+                "frequency": m.frequency,
+                "prescribed_by": m.prescribed_by,
+                "start_date": m.start_date.isoformat() if m.start_date else None,
+            }
+            for m in active_medications
+        ],
+        "upcoming_followups": [
+            {
+                "action": f.action,
+                "due_date": f.due_date.isoformat() if f.due_date else None,
+                "priority": f.priority,
+                "days_until": (f.due_date - now).days if f.due_date else None,
+            }
+            for f in upcoming_followups
+        ],
+        "overdue_followups": [
+            {
+                "action": f.action,
+                "due_date": f.due_date.isoformat() if f.due_date else None,
+                "days_overdue": (now - f.due_date).days if f.due_date else None,
+            }
+            for f in overdue_followups
+        ],
+        "diagnostic_history": [
+            {
+                "test_name": t.test_name,
+                "ordered_date": t.ordered_date.isoformat() if t.ordered_date else None,
+                "status": t.result_status,
+                "result_value": t.result_value,
+            }
+            for t in tests[:10]
+        ],
+    }

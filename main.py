@@ -1,7 +1,9 @@
 ﻿"""
 FastAPI application for the healthcare navigation AI agent.
-Provides the /agent/chat endpoint for conversational interactions,
-plus sessions, dashboard, reminders, notifications, and document upload.
+Provides the /agent/chat endpoint for conversational interactions, plus
+persistent chat-session management (new chat, list sessions, per-session history),
+document upload with OCR extraction, nearby-facility location search, and a
+patient care-journey dashboard.
 """
 
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Form
@@ -14,27 +16,21 @@ import logging
 import shutil
 import uuid
 import os
-import glob
 
-from apscheduler.schedulers.background import BackgroundScheduler
-
-from models import SessionLocal, Patient, ChatMessage, ChatSession, SymptomLog, Medication
-from agent import HealthcareNavigationAgent, CONVERSATION_HISTORIES
+from models import SessionLocal, Patient, ChatSession
+from agent import HealthcareNavigationAgent
 from sqlalchemy.orm import Session
 import tools
-import reminders
 
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# FastAPI app
 app = FastAPI(
     title="Healthcare Navigation AI Agent",
     description="AI-powered conversational interface for healthcare navigation with function calling",
-    version="1.0.0"
+    version="1.3.0"
 )
 
 app.add_middleware(
@@ -48,40 +44,16 @@ app.add_middleware(
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# ==================== BACKGROUND SCHEDULER (medication reminders) ====================
-scheduler = BackgroundScheduler()
-
 
 # ==================== SERVE THE CHAT FRONTEND ====================
 
 @app.get("/")
 async def serve_frontend():
-    """Serve the chat UI at the root URL. Looks for any file starting with
-    'mediflow' so it still works even if the browser auto-renamed the
-    download (e.g. 'mediflow-chat 1.html', 'mediflow-chat(1).html')."""
-    folder = os.path.dirname(__file__)
-    exact_path = os.path.join(folder, "mediflow-chat.html")
-
-    if os.path.exists(exact_path):
-        return FileResponse(exact_path)
-
-    candidates = glob.glob(os.path.join(folder, "mediflow*.html"))
-    if candidates:
-        return FileResponse(candidates[0])
-
-    return JSONResponse(
-        status_code=404,
-        content={"error": "No mediflow*.html file found next to main.py. Files here: " + str(os.listdir(folder))}
-    )
-
-
-@app.get("/voice-feature-safe.js")
-async def serve_voice_feature():
-    """Serve only the voice feature JavaScript; do not expose project files."""
-    voice_file = os.path.join(os.path.dirname(__file__), "voice-feature-safe.js")
-    if not os.path.exists(voice_file):
-        raise HTTPException(status_code=404, detail="voice-feature-safe.js not found next to main.py")
-    return FileResponse(voice_file, media_type="application/javascript")
+    """Serve the chat UI at the root URL."""
+    html_path = os.path.join(os.path.dirname(__file__), "mediflow-chat.html")
+    if os.path.exists(html_path):
+        return FileResponse(html_path)
+    return JSONResponse(status_code=404, content={"error": "mediflow-chat.html not found next to main.py"})
 
 
 # ==================== REQUEST/RESPONSE MODELS ====================
@@ -90,7 +62,10 @@ class MessageInput(BaseModel):
     """Input model for chat message."""
     patient_id: str = Field(..., description="Patient ID")
     message: str = Field(..., description="Patient's message or question")
-    session_id: Optional[str] = Field(None, description="Existing chat session ID; omit to start a new chat")
+    session_id: Optional[str] = Field(
+        None,
+        description="Which chat session to continue. Omit to use the patient's most recent active session."
+    )
 
 
 class ToolCall(BaseModel):
@@ -101,10 +76,10 @@ class ToolCall(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str = Field(..., description="Natural language response from the agent")
-    session_id: str = Field(..., description="Chat session this message belongs to")
     tool_calls_made: List[ToolCall] = Field(default_factory=list)
     structured_data: Dict[str, Any] = Field(default_factory=dict)
-    timestamp: str = Field(..., description="ISO format timestamp")
+    timestamp: str
+    session_id: str = Field(..., description="The chat session this exchange belongs to")
 
 
 class PatientRegister(BaseModel):
@@ -115,22 +90,14 @@ class PatientRegister(BaseModel):
     preferred_language: Optional[str] = Field("english", description="Preferred language for explanations")
 
 
-class PatientLanguageUpdate(BaseModel):
-    preferred_language: str = Field(..., description="e.g. english, hindi, punjabi")
-
-
-class PatientLocationUpdate(BaseModel):
-    latitude: float = Field(..., ge=-90, le=90)
-    longitude: float = Field(..., ge=-180, le=180)
-    address: Optional[str] = Field(None, max_length=500)
-
-
-class ReminderCreate(BaseModel):
+class NewSessionInput(BaseModel):
     patient_id: str = Field(..., description="Patient ID")
-    medication_id: Optional[str] = Field(None, description="Medication ID this reminder is for, if it's on file")
-    medicine_name: Optional[str] = Field(None, description="Free-text medicine name, if not on file yet")
-    reminder_time: str = Field(..., description="Time of day in 24-hour HH:MM format, e.g. '08:00'")
-    label: Optional[str] = Field(None, description="Optional note, e.g. 'with breakfast'")
+    title: Optional[str] = Field("New Chat", description="Optional title for the new chat session")
+
+
+class LocationInput(BaseModel):
+    patient_id: str = Field(..., description="Patient ID")
+    address: str = Field(..., description="Free-text address, any city, India or international")
 
 
 # ==================== DEPENDENCIES ====================
@@ -158,18 +125,23 @@ async def health_check():
 
 @app.get("/agent/patients")
 async def list_patients() -> Dict[str, Any]:
-    """List all registered patients (id + name), so a frontend can offer a picker."""
+    """List all registered patients (id, name, preferred_language)."""
     db = SessionLocal()
     try:
         patients = db.query(Patient).all()
-        return {"patients": [{"id": p.id, "name": p.name} for p in patients]}
+        return {
+            "patients": [
+                {"id": p.id, "name": p.name, "preferred_language": p.preferred_language or "english"}
+                for p in patients
+            ]
+        }
     finally:
         db.close()
 
 
 @app.post("/agent/register-patient")
 async def register_patient(input_data: PatientRegister) -> Dict[str, Any]:
-    """Register a brand-new patient. Returns the generated patient_id."""
+    """Register a brand-new patient and return their generated patient_id."""
     db = SessionLocal()
     try:
         new_patient = Patient(
@@ -191,41 +163,120 @@ async def register_patient(input_data: PatientRegister) -> Dict[str, Any]:
         db.close()
 
 
-@app.put("/agent/patients/{patient_id}/language")
-async def update_patient_language(
-    patient_id: str, input_data: PatientLanguageUpdate, db: Session = Depends(get_db)
+# ==================== LOCATION / NEARBY FACILITIES ====================
+
+@app.post("/agent/update-location")
+async def update_location(input_data: LocationInput) -> Dict[str, Any]:
+    """Save/update a patient's address — geocodes it to lat/lon via OpenStreetMap so
+    nearby-facility search works, for any city worldwide."""
+    db = SessionLocal()
+    try:
+        patient = db.query(Patient).filter(Patient.id == input_data.patient_id).first()
+        if not patient:
+            raise HTTPException(status_code=404, detail=f"Patient {input_data.patient_id} not found")
+
+        geo = tools.geocode_address(input_data.address)
+        if "error" in geo:
+            raise HTTPException(status_code=422, detail=geo["error"])
+
+        patient.address = geo["display_name"]
+        patient.latitude = geo["latitude"]
+        patient.longitude = geo["longitude"]
+        patient.location_updated_at = datetime.utcnow()
+        db.commit()
+
+        return {
+            "status": "success",
+            "address": patient.address,
+            "latitude": patient.latitude,
+            "longitude": patient.longitude,
+        }
+    except HTTPException:
+        raise
+    finally:
+        db.close()
+
+
+@app.get("/agent/nearby-facilities/{patient_id}")
+async def nearby_facilities(patient_id: str, facility_type: str = "hospital") -> Dict[str, Any]:
+    """Find real nearby hospitals, pharmacies, clinics, or diagnostic labs for a patient's saved location."""
+    db = SessionLocal()
+    try:
+        result = tools.find_nearby_facilities(patient_id, facility_type, db)
+        if "error" in result:
+            raise HTTPException(status_code=422, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    finally:
+        db.close()
+
+
+# ==================== DASHBOARD ====================
+
+@app.get("/agent/dashboard/{patient_id}")
+async def get_patient_dashboard(patient_id: str) -> Dict[str, Any]:
+    """Get the patient's care journey dashboard: completed consultations, pending
+    appointments, active medications, upcoming follow-ups, and diagnostic history."""
+    db = SessionLocal()
+    try:
+        result = tools.get_patient_dashboard(patient_id, db)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    finally:
+        db.close()
+
+
+# ==================== CHAT SESSIONS (persistent history, "New Chat") ====================
+
+@app.post("/agent/chat/new-session")
+async def new_chat_session(
+    input_data: NewSessionInput,
+    agent: HealthcareNavigationAgent = Depends(get_agent)
 ) -> Dict[str, Any]:
-    """Change a patient's preferred language for future replies."""
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    """
+    Start a fresh chat session for a patient. Old sessions and their
+    messages are kept — nothing is deleted, this just switches new
+    messages into a clean conversation (like opening a new chat tab).
+    """
+    patient = agent.get_or_create_patient(input_data.patient_id)
+    if not patient:
+        raise HTTPException(status_code=404, detail=f"Patient {input_data.patient_id} not found")
+
+    session = agent.start_new_session(input_data.patient_id, title=input_data.title or "New Chat")
+    return {"session_id": session.id, "title": session.title, "created_at": session.created_at.isoformat()}
+
+
+@app.get("/agent/chat/sessions/{patient_id}")
+async def list_chat_sessions(
+    patient_id: str,
+    agent: HealthcareNavigationAgent = Depends(get_agent)
+) -> Dict[str, Any]:
+    """
+    List all of a patient's past + active chat sessions, most recent first.
+    Each session includes its full message list, so the frontend can load
+    a session's history directly without a second round-trip.
+    """
+    patient = agent.get_or_create_patient(patient_id)
     if not patient:
         raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
-    patient.preferred_language = input_data.preferred_language
-    db.commit()
-    return {"patient_id": patient.id, "preferred_language": patient.preferred_language}
 
-
-# ==================== PATIENT LOCATION ====================
-
-@app.put("/agent/patients/{patient_id}/location")
-async def update_patient_location(
-    patient_id: str, input_data: PatientLocationUpdate, db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    """Save a patient's location for nearby doctor/clinic searches."""
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
-    if not patient:
-        raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
-
-    patient.latitude = input_data.latitude
-    patient.longitude = input_data.longitude
-    patient.address = input_data.address
-    patient.location_updated_at = datetime.utcnow()
-    db.commit()
-
+    sessions = agent.list_sessions(patient_id)
     return {
-        "patient_id": patient.id,
-        "message": "Location saved successfully.",
-        "latitude": patient.latitude,
-        "longitude": patient.longitude,
+        "sessions": [
+            {
+                "id": s.id,
+                "title": s.title,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+                "last_message_at": s.last_message_at.isoformat() if s.last_message_at else None,
+                "is_archived": s.is_archived,
+                "messages": agent.get_session_history(s.id),
+            }
+            for s in sessions
+        ]
     }
 
 
@@ -240,10 +291,7 @@ async def agent_chat(
     try:
         logger.info(f"Processing message for patient {input_data.patient_id}")
 
-        db = SessionLocal()
-        patient = db.query(Patient).filter(Patient.id == input_data.patient_id).first()
-        db.close()
-
+        patient = agent.get_or_create_patient(input_data.patient_id)
         if not patient:
             logger.warning(f"Patient not found: {input_data.patient_id}")
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Patient {input_data.patient_id} not found")
@@ -254,7 +302,7 @@ async def agent_chat(
             session_id=input_data.session_id,
         )
 
-        if "error" in result and result.get("error") not in (None, "rate_limited"):
+        if "error" in result:
             logger.error(f"Agent error: {result['error']}")
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=result["error"])
 
@@ -262,10 +310,10 @@ async def agent_chat(
 
         return ChatResponse(
             reply=result["reply"],
-            session_id=result["session_id"],
             tool_calls_made=[ToolCall(**tc) for tc in result["tool_calls_made"]],
             structured_data=result["structured_data"],
-            timestamp=result["timestamp"]
+            timestamp=result["timestamp"],
+            session_id=result["session_id"],
         )
 
     except HTTPException:
@@ -273,92 +321,6 @@ async def agent_chat(
     except Exception as e:
         logger.exception(f"Unexpected error processing message: {str(e)}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error: {str(e)}")
-
-
-# ==================== CHAT SESSIONS (sidebar history) ====================
-
-@app.post("/agent/sessions")
-async def new_chat_session(patient_id: str, agent: HealthcareNavigationAgent = Depends(get_agent)) -> Dict[str, Any]:
-    """'New Chat' button — starts a fresh thread; old ones stay in the sidebar."""
-    session = agent.create_session(patient_id)
-    return {"session_id": session.id, "title": session.title}
-
-
-@app.get("/agent/sessions/{patient_id}")
-async def list_chat_sessions(patient_id: str, agent: HealthcareNavigationAgent = Depends(get_agent)) -> Dict[str, Any]:
-    """Sidebar list: all past chats for this patient, most recent first."""
-    return {"patient_id": patient_id, "sessions": agent.list_sessions(patient_id)}
-
-
-@app.get("/agent/sessions/{session_id}/messages")
-async def get_session_messages(session_id: str, agent: HealthcareNavigationAgent = Depends(get_agent)) -> Dict[str, Any]:
-    """Full messages for one chat — used when a sidebar chat is clicked to continue it."""
-    return {"session_id": session_id, "messages": agent.get_full_session_messages(session_id)}
-
-
-@app.delete("/agent/sessions/{session_id}")
-async def delete_chat_session(
-    session_id: str, patient_id: str, agent: HealthcareNavigationAgent = Depends(get_agent)
-) -> Dict[str, str]:
-    deleted = agent.delete_session(patient_id, session_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return {"status": "success", "message": "Chat deleted."}
-
-
-# ==================== DASHBOARD (single call, no LLM — fast) ====================
-
-@app.get("/agent/dashboard/{patient_id}")
-async def get_dashboard(patient_id: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
-    """
-    One call that returns everything a patient dashboard needs:
-    profile, active medications, upcoming/overdue follow-ups,
-    medication conflicts, and unread notification count.
-    """
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
-    if not patient:
-        raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
-
-    now = datetime.utcnow()
-
-    active_meds = db.query(Medication).filter(
-        Medication.patient_id == patient_id
-    ).filter(
-        (Medication.end_date == None) | (Medication.end_date > now)
-    ).all()
-
-    followups_data = tools.get_upcoming_followups(patient_id, db)
-    conflicts_data = tools.check_medication_conflicts(patient_id, db)
-    notif_list = reminders.list_notifications(patient_id, db, unread_only=True)
-
-    return {
-        "patient": {
-            "id": patient.id,
-            "name": patient.name,
-            "age": patient.age,
-            "gender": patient.gender,
-            "preferred_language": patient.preferred_language,
-            "location_saved": patient.latitude is not None and patient.longitude is not None,
-        },
-        "active_medications": [
-            {
-                "id": m.id,
-                "name": m.name,
-                "dosage": m.dosage,
-                "frequency": m.frequency,
-                "indication": m.indication,
-                "prescribed_by": m.prescribed_by,
-            }
-            for m in active_meds
-        ],
-        "medication_count": len(active_meds),
-        "upcoming_followups": followups_data.get("followups", []),
-        "overdue_count": followups_data.get("overdue_count", 0),
-        "conflicts": conflicts_data.get("conflicts", []),
-        "has_conflicts": conflicts_data.get("has_conflicts", False),
-        "unread_notifications": len(notif_list),
-        "generated_at": now.isoformat(),
-    }
 
 
 # ==================== MODULE 2: DOCUMENT UPLOAD & OCR EXTRACTION ====================
@@ -369,9 +331,7 @@ async def upload_document(
     document_type: str = Form(...),
     file: UploadFile = File(...),
 ):
-    """Upload a prescription/report/discharge-summary image, run OCR + LLM
-    extraction, and save the structured result. For prescriptions, extracted
-    medicines are also inserted into the Medication table."""
+    """Upload a prescription/report/discharge-summary image, run OCR + LLM extraction, save results."""
     db = SessionLocal()
     try:
         patient = db.query(Patient).filter(Patient.id == patient_id).first()
@@ -392,7 +352,6 @@ async def upload_document(
 
         if "error" in result:
             raise HTTPException(status_code=422, detail=result["error"])
-
         return result
 
     except HTTPException:
@@ -404,123 +363,88 @@ async def upload_document(
         db.close()
 
 
-# ==================== MEDICATIONS (lightweight list, used by the reminders UI) ====================
+# ==================== CONVERSATION HISTORY ====================
 
-@app.get("/agent/medications/{patient_id}")
-async def get_medications(patient_id: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
-    """List a patient's medications — used to populate the 'add a reminder' dropdown."""
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
-    if not patient:
-        raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
-
-    meds = db.query(Medication).filter(Medication.patient_id == patient_id).all()
-    return {
-        "patient_id": patient_id,
-        "medications": [{"id": m.id, "name": m.name, "dosage": m.dosage} for m in meds],
-    }
-
-
-# ==================== MEDICATION REMINDERS ====================
-
-@app.post("/agent/reminders")
-async def create_reminder_endpoint(input_data: ReminderCreate, db: Session = Depends(get_db)) -> Dict[str, Any]:
-    """Create a daily reminder for a medication at a given time of day."""
-    result = reminders.create_reminder(
-        patient_id=input_data.patient_id,
-        reminder_time=input_data.reminder_time,
-        db=db,
-        medication_id=input_data.medication_id,
-        medicine_name=input_data.medicine_name,
-        label=input_data.label,
-    )
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
-    return result
-
-
-@app.get("/agent/reminders/{patient_id}")
-async def get_reminders(patient_id: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
-    """List all active reminders for a patient."""
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
-    if not patient:
-        raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
-    return {"patient_id": patient_id, "reminders": reminders.list_reminders(patient_id, db)}
-
-
-@app.delete("/agent/reminders/{reminder_id}")
-async def remove_reminder(reminder_id: str, patient_id: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
-    """Deactivate a reminder. patient_id passed as a query param for ownership check."""
-    result = reminders.delete_reminder(reminder_id=reminder_id, patient_id=patient_id, db=db)
-    if "error" in result:
-        raise HTTPException(status_code=404, detail=result["error"])
-    return result
-
-
-# ==================== NOTIFICATIONS ====================
-
-@app.get("/agent/notifications/{patient_id}")
-async def get_notifications(
-    patient_id: str, unread_only: bool = False, db: Session = Depends(get_db),
+@app.get("/agent/conversation/{patient_id}")
+async def get_conversation_history(
+    patient_id: str,
+    session_id: Optional[str] = None,
+    agent: HealthcareNavigationAgent = Depends(get_agent)
 ) -> Dict[str, Any]:
-    """List notifications for a patient (most recent first). Frontend polls this."""
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
-    if not patient:
-        raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
+    """
+    Get conversation history for a patient. If session_id is omitted, returns
+    the patient's current active session (creating one if they have none yet).
+    """
+    try:
+        patient = agent.get_or_create_patient(patient_id)
+        if not patient:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Patient {patient_id} not found")
 
-    notif_list = reminders.list_notifications(patient_id, db, unread_only=unread_only)
-    unread_count = sum(1 for n in notif_list if not n["is_read"]) if not unread_only else len(notif_list)
+        if session_id:
+            session = agent.db.query(ChatSession).filter(
+                ChatSession.id == session_id, ChatSession.patient_id == patient_id
+            ).first()
+            if not session:
+                raise HTTPException(status_code=404, detail="Session not found for this patient")
+        else:
+            session = agent.get_or_create_active_session(patient_id)
 
-    return {"patient_id": patient_id, "unread_count": unread_count, "notifications": notif_list}
+        history = agent.get_session_history(session.id)
 
+        return {
+            "patient_id": patient_id,
+            "patient_name": patient.name,
+            "session_id": session.id,
+            "message_count": len(history),
+            "conversation_history": history
+        }
 
-@app.post("/agent/notifications/{notification_id}/read")
-async def read_notification(notification_id: str, patient_id: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
-    """Mark a notification as read. patient_id passed as a query param for ownership check."""
-    result = reminders.mark_notification_read(notification_id=notification_id, patient_id=patient_id, db=db)
-    if "error" in result:
-        raise HTTPException(status_code=404, detail=result["error"])
-    return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error retrieving conversation: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error: {str(e)}")
 
-
-# ==================== CONVERSATION MANAGEMENT (legacy — clears ALL sessions) ====================
 
 @app.delete("/agent/conversation/{patient_id}")
-async def clear_all_conversation_history(patient_id: str, db: Session = Depends(get_db)) -> Dict[str, str]:
-    """Delete ALL of this patient's chat sessions, messages, and symptom logs.
-    Use the /agent/sessions/{session_id} DELETE endpoint instead if you only
-    want to remove one chat thread."""
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
-    if not patient:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Patient {patient_id} not found")
+async def archive_active_session(
+    patient_id: str,
+    agent: HealthcareNavigationAgent = Depends(get_agent)
+) -> Dict[str, str]:
+    """
+    Archive the patient's current active session (equivalent to starting a
+    fresh chat). The old conversation is NOT deleted — it stays in the
+    database and can still be viewed via /agent/chat/sessions/{patient_id}.
+    """
+    try:
+        patient = agent.get_or_create_patient(patient_id)
+        if not patient:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Patient {patient_id} not found")
 
-    session_ids = [s.id for s in db.query(ChatSession).filter(ChatSession.patient_id == patient_id).all()]
+        active = agent.get_active_session(patient_id)
+        if active:
+            active.is_archived = True
+            agent.db.commit()
 
-    db.query(SymptomLog).filter(SymptomLog.patient_id == patient_id).delete(synchronize_session=False)
-    db.query(ChatMessage).filter(ChatMessage.patient_id == patient_id).delete(synchronize_session=False)
-    db.query(ChatSession).filter(ChatSession.patient_id == patient_id).delete(synchronize_session=False)
-    db.commit()
+        return {"status": "success", "message": f"Started a fresh conversation for patient {patient_id}"}
 
-    for sid in session_ids:
-        CONVERSATION_HISTORIES.pop(sid, None)
-
-    return {"status": "success", "message": "All chat sessions and symptom logs were cleared."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error archiving conversation: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error: {str(e)}")
 
 
 # ==================== TOOL DOCUMENTATION ====================
 
 @app.get("/agent/tools")
 async def list_available_tools() -> Dict[str, Any]:
-    """Get documentation about available tools."""
     from llm import TOOLS_SCHEMA
     return {
         "total_tools": len(TOOLS_SCHEMA),
         "tools": [
-            {
-                "name": tool["function"]["name"],
-                "description": tool["function"]["description"],
-                "parameters": tool["function"]["parameters"]
-            }
-            for tool in TOOLS_SCHEMA
+            {"name": t["function"]["name"], "description": t["function"]["description"], "parameters": t["function"]["parameters"]}
+            for t in TOOLS_SCHEMA
         ]
     }
 
@@ -529,57 +453,34 @@ async def list_available_tools() -> Dict[str, Any]:
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"error": exc.detail, "timestamp": datetime.utcnow().isoformat()}
-    )
+    return JSONResponse(status_code=exc.status_code, content={"error": exc.detail, "timestamp": datetime.utcnow().isoformat()})
 
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request, exc):
     logger.exception("Unhandled exception")
-    return JSONResponse(
-        status_code=500,
-        content={"error": "Internal server error", "timestamp": datetime.utcnow().isoformat()}
-    )
+    return JSONResponse(status_code=500, content={"error": "Internal server error", "timestamp": datetime.utcnow().isoformat()})
 
 
-# ==================== STARTUP/SHUTDOWN ====================
+# ==================== STARTUP ====================
 
 @app.on_event("startup")
 async def startup_event():
     logger.info("Healthcare Navigation AI Agent starting up")
     logger.info("Available endpoints:")
-    logger.info("  POST   /agent/chat - Process patient message")
-    logger.info("  POST   /agent/sessions - Start a new chat session")
-    logger.info("  GET    /agent/sessions/{patient_id} - List chat sessions (sidebar)")
-    logger.info("  GET    /agent/sessions/{session_id}/messages - Load one chat's full messages")
-    logger.info("  DELETE /agent/sessions/{session_id} - Delete one chat session")
-    logger.info("  GET    /agent/dashboard/{patient_id} - Dashboard summary")
-    logger.info("  PUT    /agent/patients/{patient_id}/location - Save location")
-    logger.info("  PUT    /agent/patients/{patient_id}/language - Change preferred language")
+    logger.info("  POST   /agent/chat - Process patient message (persisted per session)")
+    logger.info("  POST   /agent/chat/new-session - Start a fresh chat session")
+    logger.info("  GET    /agent/chat/sessions/{patient_id} - List a patient's chat sessions (with messages)")
     logger.info("  POST   /agent/upload-document - Upload & extract a medical document")
-    logger.info("  POST   /agent/reminders - Create a medication reminder")
-    logger.info("  GET    /agent/reminders/{patient_id} - List reminders")
-    logger.info("  DELETE /agent/reminders/{reminder_id} - Delete a reminder")
-    logger.info("  GET    /agent/notifications/{patient_id} - List notifications")
-    logger.info("  POST   /agent/notifications/{notification_id}/read - Mark notification read")
-    logger.info("  DELETE /agent/conversation/{patient_id} - Clear ALL sessions for a patient")
+    logger.info("  POST   /agent/update-location - Save/geocode a patient's address")
+    logger.info("  GET    /agent/nearby-facilities/{patient_id} - Find nearby hospitals/pharmacies/clinics/labs")
+    logger.info("  GET    /agent/dashboard/{patient_id} - Patient care journey dashboard")
+    logger.info("  GET    /agent/conversation/{patient_id} - Get conversation history")
+    logger.info("  DELETE /agent/conversation/{patient_id} - Archive active session (start fresh)")
     logger.info("  GET    /agent/tools - List available tools")
     logger.info("  GET    /health - Health check")
-
-    scheduler.add_job(reminders.check_due_reminders, "interval", seconds=60, id="reminder_check")
-    scheduler.start()
-    logger.info("Reminder scheduler started (checking every 60 seconds)")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    scheduler.shutdown(wait=False)
-    logger.info("Reminder scheduler stopped")
 
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-    
